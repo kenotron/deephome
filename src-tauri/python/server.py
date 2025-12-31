@@ -1,0 +1,44 @@
+import asyncio
+import json
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from agent import generate_widget_stream
+
+from fastapi.staticfiles import StaticFiles
+import os
+
+app = FastAPI()
+
+# Ensure generated directory exists
+GENERATED_DIR = "generated"
+if not os.path.exists(GENERATED_DIR):
+    os.makedirs(GENERATED_DIR)
+
+app.mount("/generated", StaticFiles(directory=GENERATED_DIR), name="generated")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/agent/query")
+async def stream_agent_query(prompt: str):
+    async def event_generator():
+        # SSE format: data: <payload>\n\n
+        # We need to serialize our (event_type, payload) tuple into SSE format
+        # Common pattern: event: type \n data: payload \n\n
+        async for event_type, payload in generate_widget_stream(prompt):
+             # payload is a string (JSON or text)
+             # We wrap it in a JSON object for the SSE 'data' field
+             data = json.dumps({"type": event_type, "payload": payload})
+             yield f"data: {data}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
