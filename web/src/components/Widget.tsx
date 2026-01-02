@@ -21,7 +21,7 @@ export function Widget({ title, className, children, onDelete, isEditMode }: Wid
             transition={{ type: "spring", stiffness: 300, damping: 25 }}
             className={cn(
                 "group relative flex flex-col overflow-hidden",
-                "bg-white/80 backdrop-blur-xl border border-black/5 rounded-3xl", // Reduced radius
+                "bg-white/80 backdrop-blur-xl border border-black/5 rounded-2xl", // Reduced radius
                 // Edit Mode: Hover effects + Drag cursor
                 isEditMode && "hover:bg-white/90 hover:border-black/10 hover:shadow-[0_20px_50px_rgba(0,0,0,0.1)] transition-all duration-500 cursor-move",
                 !isEditMode && "shadow-[0_8px_30px_rgb(0,0,0,0.04)]",

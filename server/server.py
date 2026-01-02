@@ -25,6 +25,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi import Request
+
+@app.middleware("http")
+async def add_frame_headers(request: Request, call_next):
+    response = await call_next(request)
+    # Explicitly allow iframe embedding
+    response.headers["Content-Security-Policy"] = "frame-ancestors *"
+    # Remove X-Frame-Options if present (default is strictly blocking in some setups)
+    if "X-Frame-Options" in response.headers:
+        del response.headers["X-Frame-Options"]
+    return response
+
 @app.get("/agent/query")
 async def stream_agent_query(prompt: str, session_id: str = None):
     async def event_generator():

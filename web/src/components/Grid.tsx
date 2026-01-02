@@ -130,7 +130,7 @@ export function Grid({ widgets, isEditMode }: GridProps) {
                         background: rgba(255, 255, 255, 0.7);
                         backdrop-filter: blur(20px);
                         border: 1px solid rgba(0, 0, 0, 0.05);
-                        border-radius: 1.5rem; /* rounded-3xl */
+                        border-radius: 1rem; /* rounded-2xl */
                         box-shadow: 0 10px 30px rgba(0,0,0,0.05);
                     }
                     /* Only show resize handles in edit mode (when not static) */
@@ -139,17 +139,21 @@ export function Grid({ widgets, isEditMode }: GridProps) {
                     }
                     .ui-resizable-handle {
                         z-index: 20 !important;
-                        opacity: 0 !important;
+                        opacity: 0; 
                         background: var(--terracotta, #bc6c4b) !important;
                         border-radius: 50% !important;
-                        width: 14px !important;
-                        height: 14px !important;
-                        right: 12px !important;
-                        bottom: 12px !important;
+                        width: 12px !important;
+                        height: 12px !important;
+                        right: 8px !important;
+                        bottom: 8px !important;
                         transition: opacity 0.2s;
                     }
-                    .grid-stack-item:hover .ui-resizable-handle {
-                        opacity: ${isEditMode ? '0.8' : '0'} !important;
+                    /* Always show handles in edit mode */
+                    .grid-stack:not(.grid-stack-static) .ui-resizable-handle {
+                        opacity: 0.6 !important;
+                    }
+                    .grid-stack:not(.grid-stack-static) .grid-stack-item:hover .ui-resizable-handle {
+                        opacity: 1 !important;
                     }
                 `}
             </style>
@@ -158,7 +162,7 @@ export function Grid({ widgets, isEditMode }: GridProps) {
                     <div
                         key={widget.id}
                         ref={el => { refs.current[widget.id] = el; }}
-                        className="grid-stack-item rounded-3xl"
+                        className="grid-stack-item rounded-2xl"
                         gs-id={widget.id}
                         gs-w={widget.dimensions?.w || 2}
                         gs-h={widget.dimensions?.h || 2}

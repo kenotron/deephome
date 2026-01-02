@@ -177,20 +177,20 @@ export function AgentConsole(props: AgentConsoleProps) {
 
                 {/* Preview Content */}
                 <div className="flex-1 overflow-hidden relative flex items-center justify-center p-8 text-[#4a4e4d]">
-                    {previewCode ? (
-                        <div className="w-full h-full relative group">
-                            {/* Wrapper to constrain layout */}
-                            <div className="w-full h-full bg-white/60 backdrop-blur-xl border border-white/40 rounded-3xl overflow-hidden shadow-sm ring-1 ring-black/5">
-                                <DynamicWidget code={previewCode} />
-                            </div>
-                        </div>
-                    ) : previewUrl ? (
+                    {previewUrl ? (
                         <div className="w-full h-full bg-white rounded-lg shadow-sm overflow-hidden ring-1 ring-black/5 animate-in fade-in zoom-in-95 duration-500">
                             <iframe
                                 src={`http://localhost:8000${previewUrl}`}
                                 className="w-full h-full border-0"
                                 title="Generated Widget"
                             />
+                        </div>
+                    ) : previewCode ? (
+                        <div className="w-full h-full relative group">
+                            {/* Wrapper to constrain layout */}
+                            <div className="w-full h-full bg-white/60 backdrop-blur-xl border border-white/40 rounded-3xl overflow-hidden shadow-sm ring-1 ring-black/5">
+                                <DynamicWidget code={previewCode} />
+                            </div>
                         </div>
                     ) : (
                         <div className="flex flex-col items-center justify-center text-[#4a4e4d]/20 space-y-4">

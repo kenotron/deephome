@@ -14,11 +14,8 @@ from deepagents import create_deep_agent
 GENERATED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated")
 ESBUILD_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "node_modules", ".bin", "esbuild")
 
-# Store captured data during tool calls
-_captured_data = {}
-
-# In-memory session store: session_id -> agent_instance
-ACTIVE_SESSIONS = {}
+# In-memory session store: session_id -> { "history": [messages], "agent": agent }
+SESSION_STORE = {}
 
 @tool
 def create_widget(title: str, code: str, width: int = 2, height: int = 2) -> str:
@@ -56,7 +53,6 @@ class WidgetFlow:
         yield json.dumps({"type": "log", "payload": f"Starting DeepAgent Flow for: {prompt}"})
         
         # Initialize LangChain Model
-        # GLM API Compatibility
         model = ChatOpenAI(
             model=self.model_id,
             api_key=os.getenv("OPENAI_API_KEY"),
@@ -68,38 +64,114 @@ class WidgetFlow:
         
         # Session Persistence Logic
         agent = None
-        if session_id and session_id in ACTIVE_SESSIONS:
-            agent = ACTIVE_SESSIONS[session_id]
-            yield json.dumps({"type": "log", "payload": f"Restored session: {session_id}"})
+        history = []
+        
+        if session_id:
+            if session_id in SESSION_STORE:
+                data = SESSION_STORE[session_id]
+                agent = data["agent"]
+                history = data["history"]
+                yield json.dumps({"type": "log", "payload": f"Restored session: {session_id} (History: {len(history)} msgs)"})
+            else:
+                agent = create_deep_agent(
+                    model=model,
+                    tools=[create_widget],
+                    # system_prompt=INSTRUCTIONS,
+                    name="deep-widget-agent"
+                )
+                SESSION_STORE[session_id] = {"agent": agent, "history": []}
+                history = SESSION_STORE[session_id]["history"]
+                yield json.dumps({"type": "log", "payload": f"Created new session: {session_id}"})
         else:
-            # Initialize DeepAgent
-            agent = create_deep_agent(
+             agent = create_deep_agent(
                 model=model,
                 tools=[create_widget],
-                system_prompt=INSTRUCTIONS,
+                #system_prompt=INSTRUCTIONS,
                 name="deep-widget-agent"
             )
-            if session_id:
-                ACTIVE_SESSIONS[session_id] = agent
-                yield json.dumps({"type": "log", "payload": f"Created new session: {session_id}"})
-        
+
         yield json.dumps({"type": "log", "payload": "Agent initialized. Streaming response..."})
 
+        # Append User Message to History
+        user_msg = {"role": "user", "content": prompt}
+        history.append(user_msg)
+        
+        # Track Assistant Response for History
+        assistant_content = ""
+        assistant_tool_calls = []
+
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        # Convert dict history to LangChain Message objects
+        formatted_history = []
+        for msg in history:
+            if msg["role"] == "user":
+                formatted_history.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                formatted_history.append(AIMessage(content=msg["content"], tool_calls=msg.get("tool_calls", [])))
+
         try:
-            # Run the agent stream
-            async for chunk in agent.astream({"messages": [{"role": "user", "content": prompt}]}):
-                # Handle Messages (Tokens/Text)
-                if hasattr(chunk, "messages") and chunk["messages"]:
-                    for msg in chunk["messages"]:
-                        # We might get full message objects or deltas depending on DeepAgent version
-                        # Check content
-                        if hasattr(msg, "content") and msg.content:
-                             yield json.dumps({"type": "chunk", "payload": msg.content})
+            # Run the agent stream with FULL HISTORY
+            input_payload = {"messages": formatted_history}
+            print(f"[DEBUG] Starting stream for {session_id}. History len: {len(history)}", flush=True)
+            # print(f"[DEBUG] History content: {history}", flush=True)
+
+            async for chunk in agent.astream(input_payload):
+                # LangGraph/DeepAgents yields node updates.
+                # Key "model" contains the LLM output.
+                # Key "PatchToolCallsMiddleware..." contains input echo (ignore).
                 
-                # Handle Todos/Logs
-                if "todos" in chunk and chunk["todos"]:
-                    for todo in chunk["todos"]:
-                        yield json.dumps({"type": "log", "payload": f"Plan: {todo}"})
+                # Check for model output (AIMessage)
+                if isinstance(chunk, dict) and "model" in chunk:
+                    model_data = chunk["model"]
+                    if "messages" in model_data:
+                        msgs = model_data["messages"]
+                        for msg in msgs:
+                            try:
+                                content = getattr(msg, "content", None)
+                                tool_calls = getattr(msg, "tool_calls", [])
+                                
+                                # Yield Text Content
+                                if content:
+                                    yield json.dumps({"type": "chunk", "payload": content})
+                                    assistant_content += content
+                                
+                                # Yield Tool Calls
+                                if tool_calls:
+                                    print(f"[DEBUG] Tool Calls Detected: {tool_calls}", flush=True)
+                                    assistant_tool_calls.extend(tool_calls)
+                                    for tool in tool_calls:
+                                        # tool is dict: {'name': '...', 'args': {}, 'id': '...'}
+                                        yield json.dumps({
+                                            "type": "tool_call",
+                                            "payload": json.dumps({
+                                                "name": tool["name"],
+                                                "args": tool["args"],
+                                                "id": tool.get("id")
+                                            })
+                                        })
+                                        
+                            except Exception as e:
+                                print(f"[DEBUG] Error extracting message: {e}", flush=True)
+                
+                # Check for Todos/Logs in any node output (if generic)
+                # If todos appear, they might be in a specific node or root.
+                if isinstance(chunk, dict):
+                     for key, val in chunk.items():
+                         if isinstance(val, dict) and "todos" in val and val["todos"]:
+                            for todo in val["todos"]:
+                                yield json.dumps({"type": "log", "payload": f"Plan: {todo}"})
+            
+            # Append Assistant Response to History
+            if assistant_content or assistant_tool_calls:
+                new_msg = {"role": "assistant", "content": assistant_content}
+                if assistant_tool_calls:
+                    new_msg["tool_calls"] = assistant_tool_calls
+                history.append(new_msg)
+                
+                # Update Session Store
+                if session_id:
+                    SESSION_STORE[session_id]["history"] = history
 
             # Check capture
             if _captured_data:
