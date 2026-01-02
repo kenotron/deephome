@@ -10,3 +10,5 @@ dist
 .playwright-mcp
 .pytest_cache
 .vite
+**/__pycache__
+*.log

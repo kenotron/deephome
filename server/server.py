@@ -26,12 +26,12 @@ app.add_middleware(
 )
 
 @app.get("/agent/query")
-async def stream_agent_query(prompt: str):
+async def stream_agent_query(prompt: str, session_id: str = None):
     async def event_generator():
         # SSE format: data: <payload>\n\n
         # We need to serialize our (event_type, payload) tuple into SSE format
         # Common pattern: event: type \n data: payload \n\n
-        async for event_type, payload in generate_widget_stream(prompt):
+        async for event_type, payload in generate_widget_stream(prompt, session_id):
              # payload is a string (JSON or text)
              # We wrap it in a JSON object for the SSE 'data' field
              data = json.dumps({"type": event_type, "payload": payload})

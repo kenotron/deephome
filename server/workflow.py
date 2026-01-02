@@ -4,89 +4,124 @@ import json
 import time
 import subprocess
 import logging
-from typing import Optional, Iterator
-from agno.workflow import Workflow
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
-from schema import WidgetManifest, WidgetDimensions
+import asyncio
+from typing import Optional, Iterator, AsyncIterator
+
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+from deepagents import create_deep_agent
 
 GENERATED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated")
 ESBUILD_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "node_modules", ".bin", "esbuild")
 
-class WidgetFlow(Workflow):
+# Store captured data during tool calls
+_captured_data = {}
+
+# In-memory session store: session_id -> agent_instance
+ACTIVE_SESSIONS = {}
+
+@tool
+def create_widget(title: str, code: str, width: int = 2, height: int = 2) -> str:
+    """
+    Creates and deploys a web widget. Use this tool to build apps, dashboards, or visualizations.
+    
+    Args:
+        title: The display title of the widget.
+        code: The complete React component code string.
+        width: Width in grid units (1-4, default 2).
+        height: Height in grid units (1-4, default 2).
+    """
+    global _captured_data
+    _captured_data["title"] = title
+    _captured_data["code"] = code
+    _captured_data["width"] = width
+    _captured_data["height"] = height
+    return "Success: Widget captured for bundling."
+
+class WidgetFlow:
     model_id: str = os.getenv("OPENAI_MODEL_NAME", "glm-4.7")
     
     def __init__(self, **kwargs):
         if "model_id" in kwargs:
             self.model_id = kwargs.pop("model_id")
-        super().__init__(**kwargs)
+        
         if not os.path.exists(GENERATED_DIR):
             os.makedirs(GENERATED_DIR)
 
-    def run(self, prompt: str) -> Iterator[str]:
-        # This workflow will yield status updates and finally the manifest
-        yield json.dumps({"type": "log", "payload": f"Starting WidgetFlow for: {prompt}"})
+    async def run(self, prompt: str, session_id: str = None) -> AsyncIterator[str]:
+        # Reset capture
+        global _captured_data
+        _captured_data = {}
+
+        yield json.dumps({"type": "log", "payload": f"Starting DeepAgent Flow for: {prompt}"})
         
-        # Step 1: Generate JSX using Agent
-        yield json.dumps({"type": "log", "payload": "Generating JSX code..."})
-        
-        widget_data = self.generate_jsx(prompt)
-        if not widget_data:
-            yield json.dumps({"type": "error", "payload": "Failed to generate JSX code."})
-            return
-
-        title = widget_data.get("title", "Generated Widget")
-        code = widget_data.get("code", "")
-        width = widget_data.get("width", 2)
-        height = widget_data.get("height", 2)
-
-        yield json.dumps({"type": "log", "payload": f"JSX generated for '{title}'. Bundling..."})
-
-        # Step 2: Bundle using esbuild
-        manifest = self.bundle_widget(title, code, width, height)
-        
-        if manifest:
-            yield json.dumps({"type": "manifest", "payload": json.dumps(manifest)})
-            yield json.dumps({"type": "log", "payload": "Widget bundled and ready."})
-        else:
-            yield json.dumps({"type": "error", "payload": "Failed to bundle widget."})
-
-    def generate_jsx(self, prompt: str) -> Optional[dict]:
-        from agent import INSTRUCTIONS
-        
-        # We'll use a local queue/storage to capture the tool call from the agent
-        captured_data = {}
-
-        def create_widget_tool(title: str, code: str, width: int = 2, height: int = 2):
-            captured_data["title"] = title
-            captured_data["code"] = code
-            captured_data["width"] = width
-            captured_data["height"] = height
-            return "Success: Widget captured for bundling."
-
-        agent = Agent(
-            model=OpenAIChat(id=self.model_id),
-            tools=[DuckDuckGoTools(), create_widget_tool],
-            debug_mode=True,
-            markdown=False
+        # Initialize LangChain Model
+        # GLM API Compatibility
+        model = ChatOpenAI(
+            model=self.model_id,
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("OPENAI_BASE_URL"),
+            streaming=True
         )
 
-        full_prompt = f"{INSTRUCTIONS}\n\nUser Request: {prompt}"
-        response = agent.run(full_prompt)
+        from agent import INSTRUCTIONS
         
-        # If the tool wasn't called, try to extract code from response content
-        if not captured_data and response.content:
-            # Simple regex to extract JSX from code blocks
-            match = re.search(r"```jsx\n(.*?)\n```", response.content, re.DOTALL)
-            if match:
-                captured_data["code"] = match.group(1)
-                captured_data["title"] = "Generated Widget"
+        # Session Persistence Logic
+        agent = None
+        if session_id and session_id in ACTIVE_SESSIONS:
+            agent = ACTIVE_SESSIONS[session_id]
+            yield json.dumps({"type": "log", "payload": f"Restored session: {session_id}"})
+        else:
+            # Initialize DeepAgent
+            agent = create_deep_agent(
+                model=model,
+                tools=[create_widget],
+                system_prompt=INSTRUCTIONS,
+                name="deep-widget-agent"
+            )
+            if session_id:
+                ACTIVE_SESSIONS[session_id] = agent
+                yield json.dumps({"type": "log", "payload": f"Created new session: {session_id}"})
+        
+        yield json.dumps({"type": "log", "payload": "Agent initialized. Streaming response..."})
+
+        try:
+            # Run the agent stream
+            async for chunk in agent.astream({"messages": [{"role": "user", "content": prompt}]}):
+                # Handle Messages (Tokens/Text)
+                if hasattr(chunk, "messages") and chunk["messages"]:
+                    for msg in chunk["messages"]:
+                        # We might get full message objects or deltas depending on DeepAgent version
+                        # Check content
+                        if hasattr(msg, "content") and msg.content:
+                             yield json.dumps({"type": "chunk", "payload": msg.content})
+                
+                # Handle Todos/Logs
+                if "todos" in chunk and chunk["todos"]:
+                    for todo in chunk["todos"]:
+                        yield json.dumps({"type": "log", "payload": f"Plan: {todo}"})
+
+            # Check capture
+            if _captured_data:
+                yield json.dumps({"type": "log", "payload": "Widget tool called. Bundling..."})
+                manifest = self.bundle_widget(
+                    _captured_data.get("title", "Generated Widget"),
+                    _captured_data.get("code", ""),
+                    _captured_data.get("width", 2),
+                    _captured_data.get("height", 2)
+                )
+                if manifest:
+                    yield json.dumps({"type": "manifest", "payload": json.dumps(manifest)})
+                    yield json.dumps({"type": "log", "payload": "Widget bundled successfully."})
+                else:
+                    yield json.dumps({"type": "error", "payload": "Bundling failed."})
             else:
-                captured_data["code"] = response.content
-                captured_data["title"] = "Generated Widget"
-        
-        return captured_data if "code" in captured_data else None
+                 yield json.dumps({"type": "log", "payload": "No widget generated."})
+                 
+        except Exception as e:
+            logging.error(f"DeepAgent Error: {e}")
+            yield json.dumps({"type": "error", "payload": str(e)})
+
 
     def bundle_widget(self, title: str, code: str, width: int, height: int) -> Optional[dict]:
         try:
@@ -103,9 +138,9 @@ class WidgetFlow(Workflow):
             js_file = os.path.join(widget_dir, "index.js")
             html_file = os.path.join(widget_dir, "index.html")
 
-            # Write JSX with React import if missing
-            if "import React" not in code and "from 'react'" not in code:
-                code = "import React from 'react';\n" + code
+            # Strip React imports to rely on Global React from CDN
+            code = re.sub(r"import\s+.*?from\s+['\"]react['\"];?", "", code)
+            code = re.sub(r"import\s+.*?from\s+['\"]react-dom['\"];?", "", code)
             
             # Ensure there is a default export if we are bundling
             if "export default" not in code:
@@ -114,14 +149,12 @@ class WidgetFlow(Workflow):
                 if comp_match:
                     code += f"\nexport default {comp_match.group(1)};"
                 else:
-                    # Fallback or error? Let's hope the agent follows instructions.
                     pass
 
             with open(jsx_file, "w") as f:
                 f.write(code)
 
             # Run esbuild
-            # We treat 'react' and 'react-dom' as globals provided by the HTML host
             cmd = [
                 ESBUILD_PATH,
                 jsx_file,
@@ -130,8 +163,6 @@ class WidgetFlow(Workflow):
                 "--format=iife",
                 "--global-name=WidgetComponent",
                 "--outfile=" + js_file,
-                "--external:react",
-                "--external:react-dom",
                 "--loader:.jsx=jsx"
             ]
             
@@ -146,8 +177,8 @@ class WidgetFlow(Workflow):
 <head>
     <meta charset="UTF-8" />
     <title>{title}</title>
-    <script src="https://unpkg.com/react@19/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@19/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {{ margin: 0; overflow: hidden; background: transparent; }}
@@ -159,8 +190,6 @@ class WidgetFlow(Workflow):
     <script src="./index.js"></script>
     <script>
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        // esbuild configured with --global-name=WidgetComponent
-        // The bundle will be an IIFE that sets window.WidgetComponent to the default export
         const Component = window.WidgetComponent.default || window.WidgetComponent;
         root.render(React.createElement(Component));
     </script>

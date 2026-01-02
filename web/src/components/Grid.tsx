@@ -7,13 +7,21 @@ import { useRxCollection } from 'rxdb-hooks';
 
 interface GridProps {
     widgets: any[];
+    isEditMode: boolean;
 }
 
-export function Grid({ widgets }: GridProps) {
+export function Grid({ widgets, isEditMode }: GridProps) {
     const gridRef = useRef<GridStack | null>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const refs = useRef<{ [key: string]: HTMLDivElement | null }>({});
     const collection = useRxCollection('widgets');
+
+    // Handle Edit Mode Toggle
+    useEffect(() => {
+        if (gridRef.current) {
+            gridRef.current.setStatic(!isEditMode);
+        }
+    }, [isEditMode]);
 
     useEffect(() => {
         if (!wrapperRef.current) return;
@@ -27,7 +35,8 @@ export function Grid({ widgets }: GridProps) {
                 column: 6,
                 columnOpts: { breakpoints: [{ w: 768, c: 1 }] },
                 animate: true,
-                resizable: { handles: 'se' } // Explicitly enable south-east resize
+                resizable: { handles: 'se' }, // Explicitly enable south-east resize
+                staticGrid: !isEditMode, // Initial state
             }, wrapperRef.current);
 
             gridRef.current = grid;
@@ -121,8 +130,12 @@ export function Grid({ widgets }: GridProps) {
                         background: rgba(255, 255, 255, 0.7);
                         backdrop-filter: blur(20px);
                         border: 1px solid rgba(0, 0, 0, 0.05);
-                        border-radius: 2.5rem;
+                        border-radius: 1.5rem; /* rounded-3xl */
                         box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+                    }
+                    /* Only show resize handles in edit mode (when not static) */
+                    .grid-stack-static .ui-resizable-handle {
+                        display: none !important;
                     }
                     .ui-resizable-handle {
                         z-index: 20 !important;
@@ -136,16 +149,16 @@ export function Grid({ widgets }: GridProps) {
                         transition: opacity 0.2s;
                     }
                     .grid-stack-item:hover .ui-resizable-handle {
-                        opacity: 0.8 !important;
+                        opacity: ${isEditMode ? '0.8' : '0'} !important;
                     }
                 `}
             </style>
-            <div className="grid-stack shadow-none" ref={wrapperRef}>
+            <div className={`grid-stack shadow-none ${!isEditMode ? 'grid-stack-static' : ''}`} ref={wrapperRef}>
                 {widgets.map((widget) => (
                     <div
                         key={widget.id}
                         ref={el => { refs.current[widget.id] = el; }}
-                        className="grid-stack-item rounded-[2.5rem]"
+                        className="grid-stack-item rounded-3xl"
                         gs-id={widget.id}
                         gs-w={widget.dimensions?.w || 2}
                         gs-h={widget.dimensions?.h || 2}
@@ -157,12 +170,13 @@ export function Grid({ widgets }: GridProps) {
                                 id={widget.id}
                                 title={widget.title}
                                 onDelete={() => handleDelete(widget.id)}
-                                className="h-full w-full pointer-events-auto"
+                                className={`h-full w-full pointer-events-auto ${isEditMode ? 'cursor-move' : ''}`}
+                                isEditMode={isEditMode}
                             >
                                 {widget.url ? (
                                     <iframe
                                         src={`http://localhost:8000${widget.url}`}
-                                        className="w-full h-full border-0 pointer-events-auto"
+                                        className={`w-full h-full border-0 ${isEditMode ? 'pointer-events-none' : 'pointer-events-auto'}`}
                                         title={widget.title}
                                     />
                                 ) : widget.code ? (

@@ -1,14 +1,9 @@
 import asyncio
 import json
-import time
 import os
-import re
 import logging
-from typing import Callable, Optional
-from functools import partial
+from typing import Callable
 from dotenv import load_dotenv
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from workflow import WidgetFlow
 
 load_dotenv()
@@ -17,7 +12,9 @@ load_dotenv()
 log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_debug.log")
 logging.basicConfig(filename=log_path, level=logging.DEBUG, format='%(asctime)s %(message)s')
 
-# Updated System Prompt for Tool-Based Agent
+# Design instructions are now imported by workflow.py
+# But we keep a reference here if needed, or we can move them.
+# For now, let's keep them here as a single source of truth for the system prompt.
 INSTRUCTIONS = """
 You are a "Master UI Designer" AI. Your goal is to generate React widgets that feel like premium, hand-crafted "Family OS" components.
 
@@ -71,50 +68,23 @@ export default FamilyCalc;
 Produce only the JavaScript code for the widget.
 """
 
-def create_widget_impl(q, title: str, code: str, width: int = 2, height: int = 2):
-    """
-    Creates a React-based widget. 
-    """
-    try:
-        logging.info(f"Tool called: create_widget('{title}')")
-        q.put(("log", f"Tool called: create_widget('{title}')"))
-        
-        slug = re.sub(r'[^a-z0-9]', '', title.lower()[:20])
-        timestamp = int(time.time())
-        widget_id = f"{timestamp}_{slug}"
-                
-        manifest = {
-            "id": widget_id,
-            "title": title,
-            "dimensions": {"w": width, "h": height},
-            "code": code,
-            "url": None
-        }
-        
-        q.put(("manifest", json.dumps(manifest)))
-        q.put(("log", f"Widget '{title}' generated successfully."))
-        return f"Success: Widget '{title}' generated."
-        
-    except Exception as e:
-        error_msg = f"Failed to create widget: {str(e)}"
-        logging.error(error_msg)
-        q.put(("error", error_msg))
-        return error_msg
-
-async def generate_widget_stream(prompt: str):
-    yield ("log", f"Agent received: {prompt}")
+async def generate_widget_stream(prompt: str, session_id: str = None):
+    yield ("log", f"Agent received: {prompt} (Session: {session_id})")
     if not os.getenv("OPENAI_API_KEY"):
         yield ("error", "OPENAI_API_KEY not found.")
         return
 
-    model_id = os.getenv("OPENAI_MODEL_NAME", "gpt-4o")
+    model_id = os.getenv("OPENAI_MODEL_NAME", "glm-4.7")
     flow = WidgetFlow(model_id=model_id)
     
     # Run the workflow
-    # WidgetFlow.run returns an iterator of JSON strings
-    for result_json in flow.run(prompt):
-        result = json.loads(result_json)
-        yield (result["type"], result["payload"])
+    async for result_json in flow.run(prompt, session_id=session_id):
+        try:
+            result = json.loads(result_json)
+            yield (result["type"], result["payload"])
+        except json.JSONDecodeError:
+            logging.error(f"Failed to decode JSON: {result_json}")
+            yield ("error", "Internal JSON error")
 
     yield ("done", "stop")
 

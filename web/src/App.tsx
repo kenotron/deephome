@@ -32,11 +32,13 @@ function App() {
 
 function AppContent({ db }: { db: any }) {
   const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
+  const [isEditMode, setIsEditMode] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [lastManifest, setLastManifest] = useState<any>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   const { result: widgets } = useRxData(
     'widgets',
@@ -49,6 +51,13 @@ function AppContent({ db }: { db: any }) {
     setIsGenerating(true);
     setIsComplete(false);
     setLastManifest(null);
+
+    // Ensure session ID exists
+    let sessionId = currentSessionId;
+    if (!sessionId) {
+      sessionId = Date.now().toString();
+      setCurrentSessionId(sessionId);
+    }
 
     // Create initial user message and placeholder assistant message
     const userMsg: AgentMessage = {
@@ -72,7 +81,7 @@ function AppContent({ db }: { db: any }) {
 
     try {
       console.log("Connecting to Web Backend (FastAPI)...");
-      const evtSource = new EventSource(`http://localhost:8000/agent/query?prompt=${encodeURIComponent(prompt)}`);
+      const evtSource = new EventSource(`http://localhost:8000/agent/query?prompt=${encodeURIComponent(prompt)}&session_id=${sessionId}`);
 
       evtSource.onmessage = (event) => {
         try {
@@ -190,12 +199,12 @@ function AppContent({ db }: { db: any }) {
         <>
           {/* Grid Container */}
           <div className="absolute inset-0 z-0 overflow-y-auto">
-            <Grid widgets={widgets || []} />
+            <Grid widgets={widgets || []} isEditMode={isEditMode} />
           </div>
 
           {/* HUD Layer - Explicit high z-index container */}
           <div className="absolute inset-0 z-50 pointer-events-none">
-            <Header />
+            <Header isEditMode={isEditMode} onToggleEditMode={() => setIsEditMode(!isEditMode)} />
             <Dock onSubmit={handleDockSubmit} />
           </div>
         </>

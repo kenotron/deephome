@@ -19,7 +19,7 @@ async def test_workflow():
     flow = WidgetFlow()
     prompt = "Create a simple sage green clock widget"
     
-    for result_json in flow.run(prompt):
+    async for result_json in flow.run(prompt):
         result = json.loads(result_json)
         msg_type = result["type"]
         msg_payload = result["payload"]
