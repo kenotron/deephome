@@ -7,9 +7,9 @@ import logging
 from typing import Callable, Optional
 from functools import partial
 from dotenv import load_dotenv
-from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
+from workflow import WidgetFlow
 
 load_dotenv()
 
@@ -108,59 +108,13 @@ async def generate_widget_stream(prompt: str):
         return
 
     model_id = os.getenv("OPENAI_MODEL_NAME", "gpt-4o")
-    loop = asyncio.get_event_loop()
-    import queue
-    q = queue.Queue()
+    flow = WidgetFlow(model_id=model_id)
     
-    def create_widget(title: str, code: str, width: int = 2, height: int = 2):
-        return create_widget_impl(q, title, code, width, height)
-
-    agent = Agent(
-        model=OpenAIChat(id=model_id),
-        tools=[DuckDuckGoTools(), create_widget],
-        debug_mode=True,
-        markdown=False
-    )
-
-    def run_agent_thread():
-        try:
-            full_prompt = f"{INSTRUCTIONS}\n\nUser Request: {prompt}"
-            response_stream = agent.run(full_prompt, stream=True)
-            for chunk in response_stream:
-                q.put(("chunk", chunk))
-            q.put(("done", None))
-        except Exception as e:
-            q.put(("error", str(e)))
-
-    import threading
-    t = threading.Thread(target=run_agent_thread)
-    t.start()
-    
-    while True:
-        try:
-            msg_type, msg_data = await loop.run_in_executor(None, q.get, True, 0.1)
-        except queue.Empty:
-            if not t.is_alive():
-                break
-            await asyncio.sleep(0.01)
-            continue
-            
-        if msg_type == "done":
-            break
-        elif msg_type == "error":
-            yield ("error", msg_data)
-            return
-        elif msg_type == "log":
-             yield ("log", msg_data)
-        elif msg_type == "manifest":
-             yield ("manifest", msg_data)
-        elif msg_type == "chunk":
-            chunk = msg_data
-            if hasattr(chunk, "content") and chunk.content:
-                 yield ("response", chunk.content)
-            if hasattr(chunk, "tools") and chunk.tools:
-                for tool in chunk.tools:
-                    yield ("tool_call", json.dumps({"name": tool.name, "args": tool.args}))
+    # Run the workflow
+    # WidgetFlow.run returns an iterator of JSON strings
+    for result_json in flow.run(prompt):
+        result = json.loads(result_json)
+        yield (result["type"], result["payload"])
 
     yield ("done", "stop")
 

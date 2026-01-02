@@ -1,6 +1,5 @@
-# DeepHome Development Rules
+# Core Workflow: Plan -> Exec -> Validate
 
-## Core Workflow: Plan -> Exec -> Validate
 For every feature or significant change, you MUST follow this cycle:
 
 1.  **PLAN**:

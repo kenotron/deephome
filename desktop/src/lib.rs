@@ -29,10 +29,12 @@ async fn manifest_agent(app: AppHandle, prompt: String) -> Result<(), String> {
              let sys = py.import("sys").map_err(|e| e.to_string())?;
              let path = sys.getattr("path").map_err(|e| e.to_string())?;
              
-             // Get resource path for "python/agent.py"
-             // In dev, it's likely relative to CWD or src-tauri
-             // Ideally we resolve this via tauri::path::resource_dir but for now assume relative
-             let py_dir = std::env::current_dir().unwrap().join("src-tauri").join("python");
+             // Get resource path for "server"
+             // In dev, assume we are in desktop/ and server is at ../server
+             let current_dir = std::env::current_dir().unwrap();
+             // If we are in desktop/, parent is root. join("server")
+             // Trying relative path "../server" often works if CWD is correct
+             let py_dir = current_dir.parent().unwrap().join("server");
              let py_dir_str = py_dir.to_string_lossy();
              path.call_method1("append", (py_dir_str,)).map_err(|e| e.to_string())?;
 

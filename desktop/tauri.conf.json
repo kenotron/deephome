@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.deephome.app",
   "build": {
-    "frontendDist": "../dist",
+    "frontendDist": "../web/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun run build"
+    "beforeDevCommand": "bun run --cwd ../web dev",
+    "beforeBuildCommand": "bun run --cwd ../web build"
   },
   "app": {
     "windows": [
