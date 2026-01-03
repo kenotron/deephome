@@ -57,6 +57,18 @@ export const initDB = async () => {
                         ...oldDoc,
                         url: oldDoc.url || null
                     };
+                },
+                5: (oldDoc) => {
+                    return {
+                        ...oldDoc,
+                        sessionId: oldDoc.sessionId || null
+                    };
+                },
+                6: (oldDoc) => {
+                    return {
+                        ...oldDoc,
+                        projectPath: oldDoc.projectPath || null
+                    };
                 }
             }
         }

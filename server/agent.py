@@ -31,6 +31,14 @@ TECHNICAL RULES (for Widgets):
 - Use `tailwindcss` for styling.
 - Components must be functional and interactive.
 
+DESIGN REQUIREMENTS:
+- **ALWAYS include a background color** - widgets sit directly on the canvas
+- Use warm, earthy colors: sage green (#a3b18a), terracotta (#bc6c4b), mustard yellow, coral, etc.
+- Add rounded corners (`rounded-xl` or `rounded-2xl`)
+- Include subtle padding (`p-4` to `p-6`)
+- NO borders, NO white backgrounds, NO shadows on the main container
+- Each widget should have its own distinctive color scheme
+
 LAYOUT BEST PRACTICES:
 - **Calendars/Grids**: ALWAYS use CSS Grid.
   - Example: `<div className="grid grid-cols-7 gap-1">` for calendar days.
@@ -41,14 +49,13 @@ LAYOUT BEST PRACTICES:
 """
 
 async def generate_widget_stream(prompt: str, session_id: str = None):
-    yield ("log", f"Agent received: {prompt} (Session: {session_id})")
     if not os.getenv("OPENAI_API_KEY"):
         yield ("error", "OPENAI_API_KEY not found.")
         return
 
     model_id = os.getenv("OPENAI_MODEL_NAME", "glm-4.7")
     flow = WidgetFlow(model_id=model_id)
-    
+
     # Run the workflow
     async for result_json in flow.run(prompt, session_id=session_id):
         try:

@@ -1,5 +1,5 @@
 export const WIDGET_SCHEMA_LITERAL = {
-    version: 4,
+    version: 6,
     primaryKey: 'id',
     type: 'object',
     properties: {
@@ -25,6 +25,12 @@ export const WIDGET_SCHEMA_LITERAL = {
         },
         x: { type: 'number' },
         y: { type: 'number' },
+        sessionId: {
+            type: ['string', 'null'] // Agent session ID for editing continuity
+        },
+        projectPath: {
+            type: ['string', 'null'] // Filesystem path to widget's project directory
+        },
         createdAt: {
             type: 'number'
         }

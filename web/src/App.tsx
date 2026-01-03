@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AgentConsole } from './components/AgentConsole';
 import { Grid } from './components/Grid';
 import { Dock } from './components/Dock';
@@ -31,6 +32,7 @@ function App() {
 }
 
 function AppContent({ db }: { db: any }) {
+  const navigate = useNavigate();
   const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
   const [isEditMode, setIsEditMode] = useState(false);
 
@@ -40,7 +42,7 @@ function AppContent({ db }: { db: any }) {
   const [lastManifest, setLastManifest] = useState<any>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
-  const { result: widgets } = useRxData(
+  const { result: widgets, isFetching } = useRxData(
     'widgets',
     collection => collection.find().sort({ createdAt: 'desc' })
   );
@@ -98,9 +100,15 @@ function AppContent({ db }: { db: any }) {
             switch (type) {
               case 'log':
               case 'status':
+                // Debug logs - ignore them (don't show as reasoning)
+                console.log('[Agent Log]', payload);
+                break;
+              case 'reasoning':
+                // Real reasoning/thinking content from the model
                 activeMsg.thoughts = [...(activeMsg.thoughts || []), payload];
                 break;
-              case 'response':
+              case 'chunk':
+              case 'response': // Keep 'response' for backward compatibility
                 activeMsg.content = (activeMsg.content || '') + payload;
                 break;
               case 'tool_call':
@@ -156,31 +164,132 @@ function AppContent({ db }: { db: any }) {
   };
 
   const handleDockSubmit = (prompt: string) => {
+    // Canvas chat = NEW widget session
+    const newSessionId = Date.now().toString();
+    setCurrentSessionId(newSessionId);
+    console.log("Starting NEW widget session:", newSessionId);
+
+    // Clear previous state for fresh start
+    setMessages([]);
+    setLastManifest(null);
+    setIsComplete(false);
+
+    // Update URL to widget creation
+    navigate('/widget/new');
+
     setViewMode('agent');
     handleSendMessage(prompt);
+  };
+
+  const handleEditWidget = async (widgetId: string) => {
+    // Find the widget
+    const widgetDoc = widgets?.find((w: any) => w.id === widgetId);
+    if (!widgetDoc) {
+      console.warn("Widget not found for editing:", widgetId);
+      return;
+    }
+
+    const widget = widgetDoc as any; // Cast to any to access schema properties safely
+
+    // Restore the session ID - the backend SESSION_STORE will have the full conversation history
+    const sessionId = widget.sessionId || Date.now().toString();
+    setCurrentSessionId(sessionId);
+
+    // Update URL to widget editing
+    navigate(`/widget/${widgetId}`);
+
+    // Switch to agent view
+    setViewMode('agent');
+
+    // Set up preview with existing widget
+    // CRITICAL FIX: Destructure/copy properties to ensure we have a PLAIN object
+    // RxDB returns Proxy objects that cannot be structured cloned or frozen easily by some state managers
+    setLastManifest({
+      id: widget.id,
+      title: widget.title,
+      code: widget.code,
+      url: widget.url,
+      dimensions: {
+        w: widget.dimensions?.w || 2,
+        h: widget.dimensions?.h || 2
+      }
+    });
+
+    // Start with empty messages - the backend session has the real history
+    // When the user sends a message, the agent will have full context from SESSION_STORE
+    setMessages([]);
+
+    // Fetch existing history
+    try {
+      const res = await fetch(`http://localhost:8000/agent/history/${sessionId}`);
+      if (res.ok) {
+        const history = await res.json();
+        // Transform history if needed to match AgentMessage
+        const formattedHistory = history.map((msg: any, i: number) => ({
+          id: `hist-${i}`,
+          role: msg.role,
+          content: msg.content,
+          toolCalls: msg.tool_calls ? msg.tool_calls.map((tc: any) => ({
+            id: tc.payload ? JSON.parse(tc.payload).id : 'unknown',
+            name: tc.payload ? JSON.parse(tc.payload).name : 'unknown',
+            args: tc.payload ? JSON.parse(tc.payload).args : {},
+            status: 'completed',
+            result: 'Executed'
+          })) : [],
+          timestamp: Date.now() // Timestamps might not be in the store yet
+        }));
+        setMessages(formattedHistory);
+      }
+    } catch (e) {
+      console.error("Failed to fetch history:", e);
+    }
+
+    setIsComplete(true); // Mark as complete since we have a widget to show
+    setIsGenerating(false);
   };
 
   const handleConfirmWidget = async () => {
     if (lastManifest && db) {
       console.log("Confirming widget deployment:", lastManifest.id);
       try {
-        await db.widgets.insert({
-          id: lastManifest.id || `gen-${Date.now()}`,
-          title: lastManifest.title || "Generated Widget",
-          code: lastManifest.code,
-          url: lastManifest.url,
-          dimensions: {
-            w: lastManifest.dimensions?.w || 2,
-            h: lastManifest.dimensions?.h || 2
-          },
-          x: 0,
-          y: 0,
-          createdAt: Date.now()
-        });
-        console.log("Widget inserted successfully");
+        // Check if widget already exists (editing case)
+        const existingWidget = await db.widgets.findOne(lastManifest.id).exec();
+
+        if (existingWidget) {
+          // Update existing widget
+          await existingWidget.patch({
+            title: lastManifest.title || existingWidget.title,
+            code: lastManifest.code || existingWidget.code,
+            url: lastManifest.url || existingWidget.url,
+            dimensions: lastManifest.dimensions || existingWidget.dimensions,
+            sessionId: currentSessionId || existingWidget.sessionId,
+            projectPath: (lastManifest as any).projectPath || existingWidget.projectPath
+          });
+          console.log("Widget updated successfully");
+        } else {
+          // Insert new widget
+          await db.widgets.insert({
+            id: lastManifest.id || `gen-${Date.now()}`,
+            title: lastManifest.title || "Generated Widget",
+            code: lastManifest.code,
+            url: lastManifest.url,
+            dimensions: {
+              w: lastManifest.dimensions?.w || 2,
+              h: lastManifest.dimensions?.h || 2
+            },
+            x: 0,
+            y: 0,
+            sessionId: currentSessionId || null,
+            projectPath: (lastManifest as any).projectPath || null,
+            createdAt: Date.now()
+          });
+          console.log("Widget inserted successfully");
+        }
+
         // Reset state and switch mode
         setLastManifest(null);
         setIsComplete(false);
+        navigate('/');
         setViewMode('dashboard');
       } catch (e) {
         console.error("Failed to save widget:", e);
@@ -198,8 +307,18 @@ function AppContent({ db }: { db: any }) {
       {viewMode === 'dashboard' && (
         <>
           {/* Grid Container */}
-          <div className="absolute inset-0 z-0 overflow-y-auto">
-            <Grid widgets={widgets || []} isEditMode={isEditMode} />
+          <div className="absolute inset-0 z-0 overflow-y-auto p-4">
+            {isFetching ? (
+              <div className="flex h-full items-center justify-center opacity-20">
+                <div className="animate-spin h-8 w-8 border-4 border-[var(--warm-charcoal)] border-t-transparent rounded-full"></div>
+              </div>
+            ) : (
+              <Grid
+                widgets={widgets}
+                isEditMode={isEditMode}
+                onEditWidget={handleEditWidget}
+              />
+            )}
           </div>
 
           {/* HUD Layer - Explicit high z-index container */}
@@ -219,11 +338,14 @@ function AppContent({ db }: { db: any }) {
             messages={messages}
             onSendMessage={handleSendMessage}
             onConfirm={handleConfirmWidget}
-            // Passing code as previewUrl prop temporarily or we need to update AgentConsole to accept code
-            // Updating AgentConsole next.
             previewUrl={lastManifest?.url}
             previewCode={lastManifest?.code}
-            onClose={() => setViewMode('dashboard')}
+            isEditingExisting={lastManifest && widgets?.some((w: any) => w.id === lastManifest.id)}
+            onClose={() => {
+              navigate('/');
+              setViewMode('dashboard');
+            }}
+            dimensions={lastManifest?.dimensions}
           />
         </div>
       )}

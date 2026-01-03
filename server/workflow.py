@@ -6,16 +6,23 @@ import subprocess
 import logging
 import asyncio
 from typing import Optional, Iterator, AsyncIterator
+from pathlib import Path
 
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from deepagents import create_deep_agent
+from deepagents.backends import FilesystemBackend
 
 GENERATED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated")
 ESBUILD_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "node_modules", ".bin", "esbuild")
+PROJECTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "projects")
 
-# In-memory session store: session_id -> { "history": [messages], "agent": agent }
+# In-memory session store: session_id -> { "history": [messages], "agent": agent, "project_path": str }
 SESSION_STORE = {}
+
+# Ensure projects directory exists
+if not os.path.exists(PROJECTS_DIR):
+    os.makedirs(PROJECTS_DIR)
 
 @tool
 def create_widget(title: str, code: str, width: int = 2, height: int = 2) -> str:
@@ -50,47 +57,57 @@ class WidgetFlow:
         global _captured_data
         _captured_data = {}
 
-        yield json.dumps({"type": "log", "payload": f"Starting DeepAgent Flow for: {prompt}"})
-        
         # Initialize LangChain Model
         model = ChatOpenAI(
             model=self.model_id,
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("OPENAI_BASE_URL"),
-            streaming=True
+            streaming=True,
         )
 
         from agent import INSTRUCTIONS
-        
+
         # Session Persistence Logic
         agent = None
         history = []
-        
+        project_path = None
+
         if session_id:
             if session_id in SESSION_STORE:
                 data = SESSION_STORE[session_id]
                 agent = data["agent"]
                 history = data["history"]
-                yield json.dumps({"type": "log", "payload": f"Restored session: {session_id} (History: {len(history)} msgs)"})
+                project_path = data["project_path"]
             else:
+                # Create a project directory for this session
+                project_path = os.path.join(PROJECTS_DIR, f"session_{session_id}")
+                if not os.path.exists(project_path):
+                    os.makedirs(project_path)
+
+                # Create agent with filesystem backend pointing to project directory
+                backend = FilesystemBackend(root_dir=project_path, virtual_mode=True)
+
                 agent = create_deep_agent(
                     model=model,
                     tools=[create_widget],
+                    backend=backend,
                     # system_prompt=INSTRUCTIONS,
                     name="deep-widget-agent"
                 )
-                SESSION_STORE[session_id] = {"agent": agent, "history": []}
+                SESSION_STORE[session_id] = {
+                    "agent": agent,
+                    "history": [],
+                    "project_path": project_path
+                }
                 history = SESSION_STORE[session_id]["history"]
-                yield json.dumps({"type": "log", "payload": f"Created new session: {session_id}"})
         else:
-             agent = create_deep_agent(
+            # No session - create temporary agent without persistence
+            agent = create_deep_agent(
                 model=model,
                 tools=[create_widget],
                 #system_prompt=INSTRUCTIONS,
                 name="deep-widget-agent"
             )
-
-        yield json.dumps({"type": "log", "payload": "Agent initialized. Streaming response..."})
 
         # Append User Message to History
         user_msg = {"role": "user", "content": prompt}
@@ -120,7 +137,7 @@ class WidgetFlow:
                 # LangGraph/DeepAgents yields node updates.
                 # Key "model" contains the LLM output.
                 # Key "PatchToolCallsMiddleware..." contains input echo (ignore).
-                
+
                 # Check for model output (AIMessage)
                 if isinstance(chunk, dict) and "model" in chunk:
                     model_data = chunk["model"]
@@ -128,14 +145,34 @@ class WidgetFlow:
                         msgs = model_data["messages"]
                         for msg in msgs:
                             try:
-                                content = getattr(msg, "content", None)
+                                # Check for content_blocks (structured content)
+                                content_blocks = getattr(msg, "content_blocks", None)
                                 tool_calls = getattr(msg, "tool_calls", [])
-                                
-                                # Yield Text Content
-                                if content:
+
+                                # Process content blocks separately
+                                if content_blocks:
+                                    for block in content_blocks:
+                                        block_type = block.get("type")
+
+                                        # Handle reasoning blocks
+                                        if block_type == "reasoning":
+                                            reasoning_text = block.get("reasoning", "")
+                                            if reasoning_text:
+                                                yield json.dumps({"type": "reasoning", "payload": reasoning_text})
+
+                                        # Handle text blocks
+                                        elif block_type == "text":
+                                            text_content = block.get("text", "")
+                                            if text_content:
+                                                yield json.dumps({"type": "chunk", "payload": text_content})
+                                                assistant_content += text_content
+
+                                # Fallback to raw content if content_blocks not available
+                                elif hasattr(msg, "content") and msg.content:
+                                    content = msg.content
                                     yield json.dumps({"type": "chunk", "payload": content})
                                     assistant_content += content
-                                
+
                                 # Yield Tool Calls
                                 if tool_calls:
                                     print(f"[DEBUG] Tool Calls Detected: {tool_calls}", flush=True)
@@ -150,7 +187,7 @@ class WidgetFlow:
                                                 "id": tool.get("id")
                                             })
                                         })
-                                        
+
                             except Exception as e:
                                 print(f"[DEBUG] Error extracting message: {e}", flush=True)
                 
@@ -175,56 +212,109 @@ class WidgetFlow:
 
             # Check capture
             if _captured_data:
-                yield json.dumps({"type": "log", "payload": "Widget tool called. Bundling..."})
-                manifest = self.bundle_widget(
-                    _captured_data.get("title", "Generated Widget"),
-                    _captured_data.get("code", ""),
-                    _captured_data.get("width", 2),
-                    _captured_data.get("height", 2)
-                )
-                if manifest:
-                    yield json.dumps({"type": "manifest", "payload": json.dumps(manifest)})
-                    yield json.dumps({"type": "log", "payload": "Widget bundled successfully."})
-                else:
-                    yield json.dumps({"type": "error", "payload": "Bundling failed."})
-            else:
-                 yield json.dumps({"type": "log", "payload": "No widget generated."})
+                title = _captured_data.get("title", "Generated Widget")
+                code = _captured_data.get("code", "")
+                width = _captured_data.get("width", 2)
+                height = _captured_data.get("height", 2)
+
+                # Generate widget ID for consistency
+                slug = re.sub(r'[^a-z0-9]', '', title.lower()[:20])
+                timestamp = int(time.time())
+                widget_id = f"{timestamp}_{slug}"
+
+                # Send preview IMMEDIATELY with code (before bundling)
+                preview_manifest = {
+                    "id": widget_id,
+                    "title": title,
+                    "dimensions": {"w": width, "h": height},
+                    "code": code,
+                    "url": None,  # Will be set after bundling
+                    "projectPath": project_path
+                }
+                yield json.dumps({"type": "manifest", "payload": json.dumps(preview_manifest)})
+
+                # Write widget files to project directory
+                if project_path:
+                    try:
+                        # Save the main widget code
+                        component_file = os.path.join(project_path, "widget.jsx")
+                        with open(component_file, "w") as f:
+                            f.write(code)
+
+                        # Save widget metadata
+                        metadata_file = os.path.join(project_path, "widget.json")
+                        metadata = {
+                            "title": title,
+                            "width": width,
+                            "height": height,
+                            "created_at": time.time()
+                        }
+                        with open(metadata_file, "w") as f:
+                            json.dump(metadata, f, indent=2)
+
+                        # Create a README for the project
+                        readme_file = os.path.join(project_path, "README.md")
+                        if not os.path.exists(readme_file):
+                            readme_content = f"""# {title}
+
+This is an AI-generated widget project.
+
+## Files
+- `widget.jsx` - Main React component
+- `widget.json` - Widget metadata
+- `README.md` - This file
+
+## Development
+This project is managed by the Deephome AI agent.
+You can ask the agent to modify files or add new features.
+"""
+                            with open(readme_file, "w") as f:
+                                f.write(readme_content)
+
+                        print(f"[INFO] Wrote widget files to {project_path}", flush=True)
+                    except Exception as e:
+                        print(f"[ERROR] Failed to write project files: {e}", flush=True)
+
+                # Bundle the widget for deployment (in background)
+                try:
+                    bundled_url = self.bundle_widget_simple(widget_id, title, code, width, height)
+                    if bundled_url:
+                        print(f"[INFO] Widget bundled successfully: {bundled_url}", flush=True)
+                    else:
+                        print(f"[WARN] Bundling failed, but preview still works with code", flush=True)
+                except Exception as e:
+                    print(f"[ERROR] Bundling error: {e}", flush=True)
                  
         except Exception as e:
             logging.error(f"DeepAgent Error: {e}")
             yield json.dumps({"type": "error", "payload": str(e)})
 
 
-    def bundle_widget(self, title: str, code: str, width: int, height: int) -> Optional[dict]:
+    def bundle_widget_simple(self, widget_id: str, title: str, code: str, width: int, height: int) -> Optional[str]:
+        """Bundle widget and return URL (or None if failed). Does not return full manifest."""
         try:
-            slug = re.sub(r'[^a-z0-9]', '', title.lower()[:20])
-            timestamp = int(time.time())
-            widget_id = f"{timestamp}_{slug}"
-            
             # Create a widget-specific directory
             widget_dir = os.path.join(GENERATED_DIR, widget_id)
             if not os.path.exists(widget_dir):
                 os.makedirs(widget_dir)
-            
+
             jsx_file = os.path.join(widget_dir, "index.jsx")
             js_file = os.path.join(widget_dir, "index.js")
             html_file = os.path.join(widget_dir, "index.html")
 
             # Strip React imports to rely on Global React from CDN
-            code = re.sub(r"import\s+.*?from\s+['\"]react['\"];?", "", code)
-            code = re.sub(r"import\s+.*?from\s+['\"]react-dom['\"];?", "", code)
-            
+            code_clean = re.sub(r"import\s+.*?from\s+['\"]react['\"];?", "", code)
+            code_clean = re.sub(r"import\s+.*?from\s+['\"]react-dom['\"];?", "", code_clean)
+
             # Ensure there is a default export if we are bundling
-            if "export default" not in code:
+            if "export default" not in code_clean:
                 # Try to find a component name
-                comp_match = re.search(r"(?:const|function)\s+([A-Z]\w+)", code)
+                comp_match = re.search(r"(?:const|function)\s+([A-Z]\w+)", code_clean)
                 if comp_match:
-                    code += f"\nexport default {comp_match.group(1)};"
-                else:
-                    pass
+                    code_clean += f"\nexport default {comp_match.group(1)};"
 
             with open(jsx_file, "w") as f:
-                f.write(code)
+                f.write(code_clean)
 
             # Run esbuild
             cmd = [
@@ -237,8 +327,8 @@ class WidgetFlow:
                 "--outfile=" + js_file,
                 "--loader:.jsx=jsx"
             ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
                 logging.error(f"esbuild error: {result.stderr}")
                 return None
@@ -271,13 +361,7 @@ class WidgetFlow:
             with open(html_file, "w") as f:
                 f.write(html_content)
 
-            return {
-                "id": widget_id,
-                "title": title,
-                "dimensions": {"w": width, "h": height},
-                "code": code,
-                "url": f"/generated/{widget_id}/index.html"
-            }
+            return f"/generated/{widget_id}/index.html"
 
         except Exception as e:
             logging.error(f"Bundling error: {str(e)}")

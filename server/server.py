@@ -2,8 +2,9 @@ import asyncio
 import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from agent import generate_widget_stream
+from workflow import SESSION_STORE
 
 from fastapi.staticfiles import StaticFiles
 import os
@@ -50,6 +51,12 @@ async def stream_agent_query(prompt: str, session_id: str = None):
              yield f"data: {data}\n\n"
     
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/agent/history/{session_id}")
+async def get_agent_history(session_id: str):
+    if session_id in SESSION_STORE:
+        return JSONResponse(content=SESSION_STORE[session_id]["history"])
+    return JSONResponse(content=[])
 
 if __name__ == "__main__":
     import uvicorn

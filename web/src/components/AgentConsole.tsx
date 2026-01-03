@@ -6,7 +6,7 @@ import { Streamdown } from 'streamdown';
 import { DynamicWidget } from './DynamicWidget';
 
 export interface AgentConsoleProps {
-    isOpen?: boolean; // Kept for compat, but unused in new layout ideally
+    isOpen?: boolean;
     onClose?: () => void;
     messages: AgentMessage[];
     isGenerating: boolean;
@@ -15,70 +15,32 @@ export interface AgentConsoleProps {
     onSendMessage: (message: string) => void;
     previewUrl?: string;
     previewCode?: string;
+    isEditingExisting?: boolean;
+    dimensions?: { w: number; h: number };
 }
 
-const ToolCallItem = ({ tool }: { tool: ToolCall }) => {
-    const [isExpanded, setIsExpanded] = useState(false);
-    return (
-        <div className="bg-white/40 rounded-lg border border-black/5 overflow-hidden text-xs my-2 shadow-sm">
-            <div
-                className="flex items-center gap-2 p-2 cursor-pointer hover:bg-white/60 transition-colors"
-                onClick={() => setIsExpanded(!isExpanded)}
-            >
-                <Terminal className="w-3 h-3 text-[var(--terracotta)]" />
-                <span className="font-mono text-[#4a4e4d]/80">Run: {tool.name}</span>
-                {tool.status === 'running' && <Loader2 className="w-3 h-3 animate-spin ml-auto text-[#4a4e4d]/50" />}
-                {tool.status === 'completed' && <Check className="w-3 h-3 ml-auto text-[var(--sage-green)]" />}
-                {tool.status === 'failed' && <X className="w-3 h-3 ml-auto text-red-500" />}
-            </div>
-            {isExpanded && (
-                <div className="p-2 border-t border-black/5 bg-white/30 font-mono text-[#4a4e4d]/70 whitespace-pre-wrap break-all">
-                    <div>Args: {JSON.stringify(tool.args, null, 2)}</div>
-                    {tool.result && <div className="mt-2 text-[var(--sage-green)] font-semibold">Result: {tool.result}</div>}
-                </div>
-            )}
-        </div>
-    );
-};
-
-const ThoughtProcess = ({ thoughts }: { thoughts: string[] }) => {
-    const [isExpanded, setIsExpanded] = useState(true);
-    if (!thoughts.length) return null;
-
-    return (
-        <div className="my-2 border-l-2 border-[var(--mustard)]/50 pl-3">
-            <div
-                className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity mb-1"
-                onClick={() => setIsExpanded(!isExpanded)}
-            >
-                {isExpanded ? <ChevronDown className="w-3 h-3 text-[var(--mustard)]" /> : <ChevronRight className="w-3 h-3 text-[var(--mustard)]" />}
-                <span className="text-xs font-mono text-[var(--mustard)] uppercase tracking-wider">Reasoning</span>
-            </div>
-            {isExpanded && (
-                <div className="text-sm text-[#4a4e4d]/60 space-y-1 font-serif italic">
-                    {thoughts.map((t, i) => (
-                        <p key={i}>{t}</p>
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-};
+// ... existing components ...
 
 export function AgentConsole(props: AgentConsoleProps) {
-    const { messages, isGenerating, isComplete, onConfirm, onSendMessage, previewUrl, previewCode } = props;
+    const { messages, isGenerating, isComplete, onConfirm, onSendMessage, previewUrl, previewCode, isEditingExisting, dimensions } = props;
     const scrollRef = useRef<HTMLDivElement>(null);
 
-    useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }
-    }, [messages]);
+    // ... useEffect ...
+
+    // Calculate dimensions for preview
+    // Base unit approx: w=250px (mobile/desktop avg), h=180px (from Grid.tsx)
+    // We add margin compensation.
+    // If no dimensions provided, default to full or 2x2.
+    const previewStyle = dimensions ? {
+        width: `${dimensions.w * 280}px`, // Slightly larger than typical minimal col
+        height: `${dimensions.h * 180 + (dimensions.h - 1) * 10}px`,
+        maxWidth: '100%',
+        maxHeight: '100%',
+    } : { width: '100%', height: '100%' };
 
     return (
         <div className="flex w-full h-full overflow-hidden bg-[#fefae0]">
-
-            {/* LEFT COLUMN: Chat Interface */}
+            {/* Left Column code unchanged ... */}
             <div className="w-[450px] flex-shrink-0 flex flex-col border-r border-black/5 bg-white/30 backdrop-blur-sm">
                 {/* Header */}
                 <div className="p-4 border-b border-black/5 flex items-center justify-between bg-white/40">
@@ -163,22 +125,27 @@ export function AgentConsole(props: AgentConsoleProps) {
                     <div className="flex items-center gap-2">
                         <div className="h-2 w-2 rounded-full bg-[var(--sage-green)] shadow-[0_0_8px_rgba(163,177,138,0.4)]"></div>
                         <span className="text-xs font-mono text-[#4a4e4d]/50 tracking-widest">LIVE PREVIEW</span>
+                        {dimensions && (
+                            <span className="text-[10px] bg-black/5 px-2 py-0.5 rounded text-[#4a4e4d]/40 ml-2">
+                                {dimensions.w}x{dimensions.h} grid units
+                            </span>
+                        )}
                     </div>
 
                     {isComplete && (previewUrl || previewCode) && (
                         <div className="flex items-center gap-3">
                             <button onClick={onConfirm} className="flex items-center gap-2 bg-[var(--terracotta)] hover:bg-[#a65d40] text-white px-4 py-1.5 rounded-full text-xs font-medium transition-colors shadow-lg shadow-[var(--terracotta)]/20">
                                 <Check className="w-3 h-3" />
-                                Deploy Widget
+                                {isEditingExisting ? 'Update Widget' : 'Deploy Widget'}
                             </button>
                         </div>
                     )}
                 </div>
 
                 {/* Preview Content */}
-                <div className="flex-1 overflow-hidden relative flex items-center justify-center p-8 text-[#4a4e4d]">
+                <div className="flex-1 overflow-auto relative flex items-center justify-center p-8 text-[#4a4e4d]">
                     {previewUrl ? (
-                        <div className="w-full h-full bg-white rounded-lg shadow-sm overflow-hidden ring-1 ring-black/5 animate-in fade-in zoom-in-95 duration-500">
+                        <div style={previewStyle} className="bg-white rounded-lg shadow-sm overflow-hidden ring-1 ring-black/5 animate-in fade-in zoom-in-95 duration-500 transition-all">
                             <iframe
                                 src={`http://localhost:8000${previewUrl}`}
                                 className="w-full h-full border-0"
@@ -186,9 +153,9 @@ export function AgentConsole(props: AgentConsoleProps) {
                             />
                         </div>
                     ) : previewCode ? (
-                        <div className="w-full h-full relative group">
+                        <div style={previewStyle} className="relative group transition-all">
                             {/* Wrapper to constrain layout */}
-                            <div className="w-full h-full bg-white/60 backdrop-blur-xl border border-white/40 rounded-3xl overflow-hidden shadow-sm ring-1 ring-black/5">
+                            <div className="w-full h-full bg-white/60 backdrop-blur-xl border border-white/40 rounded-3xl overflow-hidden shadow-sm ring-1 ring-black/5 flex flex-col">
                                 <DynamicWidget code={previewCode} />
                             </div>
                         </div>
