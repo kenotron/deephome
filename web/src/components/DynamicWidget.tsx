@@ -3,6 +3,8 @@ import * as Babel from '@babel/standalone';
 import * as Lucide from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import { ErrorBoundary } from './ui/ErrorBoundary';
+
 interface DynamicWidgetProps {
     code: string;
 }
@@ -80,7 +82,15 @@ export function DynamicWidget({ code }: DynamicWidgetProps) {
 
     return (
         <div className="h-full w-full relative overflow-hidden widget-boundary">
-            <Component />
+            <ErrorBoundary
+                label="Widget Runtime Error"
+                onReset={() => {
+                    // Force re-render attempt if needed, or just clear error
+                    setError(null);
+                }}
+            >
+                <Component />
+            </ErrorBoundary>
         </div>
     );
 }

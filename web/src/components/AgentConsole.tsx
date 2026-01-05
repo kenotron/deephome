@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useState } from 'react';
 import { X, Check, Loader2, Sparkles, Bot, Terminal, ChevronRight, ChevronDown } from 'lucide-react';
 import type { AgentMessage, ToolCall } from '../types';
 import { ChatInput } from './ChatInput';
@@ -172,6 +172,47 @@ export function AgentConsole(props: AgentConsoleProps) {
                 </div>
             </div>
 
+        </div>
+    );
+}
+
+function ThoughtProcess({ thoughts }: { thoughts: string[] }) {
+    const [isExpanded, setIsExpanded] = useState(false);
+    if (!thoughts || thoughts.length === 0) return null;
+
+    return (
+        <div className="bg-black/5 rounded-lg p-2 text-xs font-mono">
+            <button
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="flex items-center gap-1 opacity-50 hover:opacity-100 w-full text-left"
+            >
+                <Sparkles className="w-3 h-3" />
+                <span>{thoughts.length} thoughts</span>
+                {isExpanded ? <ChevronDown className="w-3 h-3 ml-auto" /> : <ChevronRight className="w-3 h-3 ml-auto" />}
+            </button>
+            {isExpanded && (
+                <div className="mt-2 text-[#4a4e4d]/70 space-y-1 pl-4 border-l-2 border-black/10">
+                    {thoughts.map((t, i) => (
+                        <div key={i}>{t}</div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ToolCallItem({ tool }: { tool: ToolCall }) {
+    return (
+        <div className="flex items-center gap-2 text-xs bg-white/50 px-2 py-1.5 rounded border border-black/5 font-mono text-[var(--warm-charcoal)]">
+            <Terminal className="w-3 h-3 opacity-50" />
+            <span className="font-medium">{tool.name}</span>
+            <span className="opacity-40">({Object.keys(tool.args || {}).length} args)</span>
+            <span className={`ml-auto px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${tool.status === 'running'
+                    ? 'bg-[var(--terracotta)]/10 text-[var(--terracotta)] animate-pulse'
+                    : 'bg-[var(--sage-green)]/10 text-[var(--sage-green)]'
+                }`}>
+                {tool.status}
+            </span>
         </div>
     );
 }

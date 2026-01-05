@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { AgentConsole } from './components/AgentConsole';
 import { Grid } from './components/Grid';
 import { Dock } from './components/Dock';
@@ -332,21 +334,44 @@ function AppContent({ db }: { db: any }) {
       {/* Agent/Chat View */}
       {viewMode === 'agent' && (
         <div className="absolute inset-0 z-10 animate-in fade-in slide-in-from-bottom-10 duration-300">
-          <AgentConsole
-            isGenerating={isGenerating}
-            isComplete={isComplete}
-            messages={messages}
-            onSendMessage={handleSendMessage}
-            onConfirm={handleConfirmWidget}
-            previewUrl={lastManifest?.url}
-            previewCode={lastManifest?.code}
-            isEditingExisting={lastManifest && widgets?.some((w: any) => w.id === lastManifest.id)}
-            onClose={() => {
-              navigate('/');
-              setViewMode('dashboard');
-            }}
-            dimensions={lastManifest?.dimensions}
-          />
+          <ErrorBoundary
+            label="Agent Interface Error"
+            wrapperClassName="h-full w-full bg-[#fefae0] flex items-center justify-center"
+            fallback={
+              <div className="h-full w-full bg-[#fefae0] flex flex-col items-center justify-center text-[var(--warm-charcoal)]">
+                <div className="p-8 bg-white/50 backdrop-blur-sm rounded-2xl border border-black/5 flex flex-col items-center">
+                  <AlertTriangle className="w-12 h-12 text-[var(--terracotta)] mb-4" />
+                  <h2 className="text-xl font-bold mb-2">Agent Interface Crashed</h2>
+                  <p className="text-sm opacity-60 mb-6 text-center max-w-sm">
+                    Something went wrong while rendering the chat interface.
+                    This might be due to a malformed message or component error.
+                  </p>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="bg-[var(--warm-charcoal)] text-[#fefae0] px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-opacity"
+                  >
+                    Reload Application
+                  </button>
+                </div>
+              </div>
+            }
+          >
+            <AgentConsole
+              isGenerating={isGenerating}
+              isComplete={isComplete}
+              messages={messages}
+              onSendMessage={handleSendMessage}
+              onConfirm={handleConfirmWidget}
+              previewUrl={lastManifest?.url}
+              previewCode={lastManifest?.code}
+              isEditingExisting={lastManifest && widgets?.some((w: any) => w.id === lastManifest.id)}
+              onClose={() => {
+                navigate('/');
+                setViewMode('dashboard');
+              }}
+              dimensions={lastManifest?.dimensions}
+            />
+          </ErrorBoundary>
         </div>
       )}
 
