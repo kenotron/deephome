@@ -38,6 +38,7 @@ export function DynamicWidget({ code }: DynamicWidgetProps) {
 
             const funcBody = `
         const exports = {};
+        const module = { exports: exports };
         const require = (mod) => {
             if (mod === 'react') return React;
             if (mod === 'lucide-react') return Lucide;
@@ -47,7 +48,7 @@ export function DynamicWidget({ code }: DynamicWidgetProps) {
         
         ${cleanCode}
         
-        return exports.default || (typeof App !== 'undefined' ? App : null) || (typeof Widget !== 'undefined' ? Widget : null);
+        return module.exports.default || exports.default || (typeof App !== 'undefined' ? App : null) || (typeof Widget !== 'undefined' ? Widget : null);
       `;
 
             const createComponent = new Function('React', 'Lucide', 'FramerMotion', 'useState', 'useEffect', 'useMemo', funcBody);
