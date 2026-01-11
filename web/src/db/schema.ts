@@ -1,5 +1,5 @@
 export const WIDGET_SCHEMA_LITERAL = {
-    version: 6,
+    version: 7,
     primaryKey: 'id',
     type: 'object',
     properties: {
@@ -11,7 +11,7 @@ export const WIDGET_SCHEMA_LITERAL = {
             type: 'string'
         },
         code: {
-            type: 'string' // The React code for the widget
+            type: ['string', 'null'] // The React code for the widget (nullable if using url)
         },
         url: {
             type: ['string', 'null'] // URL can be null for code-only widgets
@@ -35,5 +35,5 @@ export const WIDGET_SCHEMA_LITERAL = {
             type: 'number'
         }
     },
-    required: ['id', 'title', 'code']
+    required: ['id', 'title']
 } as const;

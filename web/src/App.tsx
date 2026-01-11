@@ -8,6 +8,7 @@ import { Dock } from './components/Dock';
 import { Header } from './components/Header';
 import type { AgentMessage } from './types';
 import { useRxData, Provider } from 'rxdb-hooks';
+import { useEventStream } from './hooks/useEventStream';
 
 // App View Modes
 type ViewMode = 'dashboard' | 'agent';
@@ -48,6 +49,29 @@ function AppContent({ db }: { db: any }) {
     'widgets',
     collection => collection.find().sort({ createdAt: 'desc' })
   );
+
+  // 1. Persistent Event Channel
+  // Connect to the event stream for the current session (or wait until we have one)
+  useEventStream({
+    url: currentSessionId ? `http://localhost:8000/agent/events/${currentSessionId}` : '',
+    enabled: !!currentSessionId,
+    onMessage: (event) => {
+      const { type, payload } = event;
+
+      switch (type) {
+        case 'preview':
+          console.log("[EventStream] Received preview:", payload);
+          setLastPreview(payload);
+          break;
+        case 'status':
+          console.log("[EventStream] Status:", payload);
+          break;
+        case 'error':
+          console.error("[EventStream] Error:", payload);
+          break;
+      }
+    }
+  });
 
 
   const handleSendMessage = async (prompt: string) => {
@@ -106,29 +130,21 @@ function AppContent({ db }: { db: any }) {
                 console.log('[Agent Log]', payload);
                 break;
               case 'reasoning':
-                // Real reasoning/thinking content from the model
-                activeMsg.thoughts = [...(activeMsg.thoughts || []), payload];
+                // Append payload token to the last thought, or start a new one if empty
+                // CRITICAL FIX: Must deep copy the array to avoid mutating previous state (Strict Mode issue)
+                activeMsg.thoughts = [...(activeMsg.thoughts || [])];
+
+                if (activeMsg.thoughts.length === 0) {
+                  activeMsg.thoughts.push(payload);
+                } else {
+                  const lastIdx = activeMsg.thoughts.length - 1;
+                  activeMsg.thoughts[lastIdx] = activeMsg.thoughts[lastIdx] + payload;
+                }
                 break;
+              // 'preview' is now handled by the persistent event channel above!
               case 'chunk':
               case 'response': // Keep 'response' for backward compatibility
-                // Detect preview manifests emitted as a standard assistant chunk
-                const previewPrefix = 'Preview ready: ';
-                if (typeof payload === 'string' && payload.startsWith(previewPrefix)) {
-                  try {
-                    const manifestJson = payload.slice(previewPrefix.length);
-                    const manifest = JSON.parse(manifestJson);
-                    // Set preview state and stop generation
-                    setLastPreview(manifest);
-                    setIsComplete(true);
-                    setIsGenerating(false);
-                    evtSource.close();
-                  } catch (e) {
-                    console.error('Failed to parse preview manifest', e);
-                    activeMsg.content = (activeMsg.content || '') + payload;
-                  }
-                } else {
-                  activeMsg.content = (activeMsg.content || '') + payload;
-                }
+                activeMsg.content = (activeMsg.content || '') + payload;
                 break;
               case 'tool_call':
                 const toolData = JSON.parse(payload);
@@ -142,6 +158,7 @@ function AppContent({ db }: { db: any }) {
                 break;
               case 'done':
                 setIsGenerating(false);
+                setIsComplete(true);  // Enable deploy button
                 evtSource.close();
                 break;
               case 'error':

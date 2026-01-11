@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import json
 import time
 import logging
@@ -9,9 +10,44 @@ from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessageChunk, AIMessageChunk
+from langchain_core.outputs import ChatGenerationChunk
 
 from agent import create_skilled_deep_agent
+
+class ChatDeepSeekCompatible(ChatOpenAI):
+    """
+    Custom ChatOpenAI subclass to handle DeepSeek/Z.ai style reasoning_content.
+    LangChain's default ChatOpenAI implementation ignores unrecognized fields in the delta.
+    """
+    def _convert_chunk_to_generation_chunk(
+        self,
+        chunk: dict,
+        default_chunk_class: type,
+        base_generation_info: dict | None,
+    ) -> ChatGenerationChunk | None:
+        # DEBUG: Print raw chunk
+        # print(f"[DEBUG] Raw LC Chunk: {chunk}", flush=True)
+
+        # Let parent do the heavy lifting
+        generation_chunk = super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info
+        )
+
+        if generation_chunk is None:
+            return None
+        
+        # Manually extract reasoning_content from the raw delta
+        try:
+            choice = chunk["choices"][0]
+            delta = choice.get("delta", {})
+            reasoning = delta.get("reasoning_content")
+            if reasoning:
+                generation_chunk.message.additional_kwargs["reasoning_content"] = reasoning
+        except (KeyError, IndexError, AttributeError):
+            pass
+            
+        return generation_chunk
 
 load_dotenv()
 
@@ -31,21 +67,33 @@ for d in [GENERATED_DIR, WORKSPACES_DIR]:
 # Global capture for preview trigger
 _preview_event = {}
 
+
+
+async def broadcast_event(session_id: str, event_type: str, payload: dict):
+    """
+    Broadcast an event to the session's event stream.
+    """
+    if session_id in SESSION_STORE:
+        queue = SESSION_STORE[session_id].get("event_queue")
+        if queue:
+            await queue.put({"type": event_type, "payload": payload})
+            print(f"[DEBUG] Broadcasted {event_type} to session {session_id}", flush=True)
+
+# Static bundle_project removed - now created dynamically in run() to capture workspace_path
+
 @tool
-def preview_widget(title: str, width: int = 2, height: int = 2) -> str:
+async def preview_widget(title: str, width: int = 2, height: int = 2) -> str:
     """
     Notify that the widget files have been created and are ready for preview.
-    Call this AFTER you have written 'widget.jsx' and 'widget.json'.
+    Call this AFTER you have written 'widget.jsx' (and optionally bundled it) and 'widget.json'.
     
     Args:
         title: Title of the widget.
         width: Width in grid units (1-4).
         height: Height in grid units (1-4).
     """
-    global _preview_event
-    _preview_event["title"] = title
-    _preview_event["width"] = width
-    _preview_event["height"] = height
+    # Simply return success. The actual file reading happens in the event loop hook
+    # where we check for widget.bundled.js or widget.jsx
     return "Success: Preview triggered."
 
 
@@ -77,12 +125,15 @@ To create a visual component, you must write TWO files to the current directory:
   - ✅ CORRECT: `widget.jsx`
   - ❌ WRONG: `/widget.jsx` (This will fail with Read-only file system error)
 - `widget.jsx` MUST export a default component (`export default function Widget() ...`).
+- **Use `bundle_project`** to compile disparate files into a single bundle.
 
 ### Workflow
-1. Write `widget.jsx` using `write` (file_path="widget.jsx", content="...").
-2. Check if write succeeded.
-3. Write `widget.json` using `write` (file_path="widget.json", content="...").
-4. Call `preview_widget` to show it to the user.
+1. Write `widget.jsx` (and any other component files) using `write`.
+2. check if write succeeded.
+3. Call `bundle_project` to compile everything into `widget.bundled.js`.
+4. Check if bundling succeeded.
+5. Write `widget.json` using `write`.
+6. Call `preview_widget` to show it to the user.
 
 ### layout Best Practices
 - Calendars/Calculators: Use `grid` layout.
@@ -102,11 +153,13 @@ class ConversationFlow:
         _preview_event = {}
 
         # Initialize Model
-        model = ChatOpenAI(
+        model = ChatDeepSeekCompatible(
             model=self.model_id,
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("OPENAI_BASE_URL"),
             streaming=True,
+            temperature=0.6,
+            model_kwargs={"reasoning_effort": "high"}
         )
 
         # Session / Workspace Setup
@@ -134,24 +187,64 @@ class ConversationFlow:
                 with open(skill_dir / "SKILL.md", "w") as f:
                     f.write(CREATION_SKILL_MD)
                 
+                # Define bound tool for bundling that knows the CWD
+                @tool
+                async def bundle_project() -> str:
+                    """
+                    Bundle the current project (widget.jsx) into a single file (widget.bundled.js).
+                    Call this BEFORE preview_widget if you have multiple files or dependencies.
+                    """
+                    try:
+                        # Run esbuild in the correct workspace directory
+                        process = await asyncio.create_subprocess_exec(
+                            ESBUILD_PATH,
+                            "widget.jsx",
+                            "--bundle",
+                            "--outfile=widget.bundled.js",
+                            "--format=esm",
+                            "--jsx=automatic", 
+                            "--loader:.js=jsx",
+                            "--loader:.jsx=jsx",
+                            "--external:react",
+                            "--external:react/jsx-runtime",
+                            "--external:lucide-react",
+                            "--external:framer-motion",
+                            cwd=str(workspace_path),  # CRITICAL FIX: Use workspace_path
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        stdout, stderr = await process.communicate()
+                        
+                        if process.returncode != 0:
+                            return f"Bundling failed: {stderr.decode()}"
+                        
+                        return "Bundling successful: widget.bundled.js created."
+                    except Exception as e:
+                        return f"Bundling error: {str(e)}"
+
                 # Initialize Agent pointing to workspace
                 agent = create_skilled_deep_agent(
                     model=model,
                     root_dir=workspace_path,
                     skills_registry_path=str(skills_dir),
-                    tools=[preview_widget],
+                    tools=[preview_widget, bundle_project],
                     name="deep-conversation-agent"
                 )
                 
                 SESSION_STORE[session_id] = {
                     "agent": agent,
                     "history": [],
-                    "workspace_path": workspace_path
+                    "workspace_path": workspace_path,
+                    "event_queue": asyncio.Queue()
                 }
                 history = SESSION_STORE[session_id]["history"]
         else:
              # Temp workspace
-            workspace_path = Path(WORKSPACES_DIR) / f"temp_{int(time.time())}"
+            workspace_path = Path(WORKSPACES_DIR) / f"temp_{int(time.time())}" # We need a real ID for events
+
+            # Create a temp session ID if none provided, to support events
+            # But the caller usually provides one.
+            pass
             workspace_path.mkdir(parents=True, exist_ok=True)
             
             # Install Skill
@@ -187,14 +280,24 @@ class ConversationFlow:
             print(f"[DEBUG] Starting stream for {session_id}.", flush=True)
             input_payload = {"messages": formatted_history}
             
-            # Use astream_events for granular token streaming
-            async for event in agent.astream_events(input_payload, version="v2"):
+            # Use astream_events for granular token streaming with high recursion limit
+            async for event in agent.astream_events(input_payload, config={"configurable": {"session_id": session_id}, "recursion_limit": 100}, version="v2"):
                 kind = event["event"]
                 name = event.get("name")
                 
                 # Stream Tokens
                 if kind == "on_chat_model_stream":
                     chunk = event["data"]["chunk"]
+                    
+                    # DEBUG: Print chunk structure to find where reasoning lives
+                    # print(f"[DEBUG] Chunk kwargs: {chunk.additional_kwargs}", flush=True) 
+
+                    # Extract reasoning content (if supported by model, e.g. DeepSeek)
+                    reasoning = chunk.additional_kwargs.get("reasoning_content")
+                    
+                    if reasoning:
+                        yield json.dumps({"type": "reasoning", "payload": reasoning})
+
                     if chunk.content:
                         yield json.dumps({"type": "chunk", "payload": chunk.content})
                 
@@ -212,19 +315,59 @@ class ConversationFlow:
 
                     if name == "preview_widget":
                         # The agent called preview_widget, meaning files are ready.
-                        # Retrieve files from disk
+                        
+                        # GENERATE index.html for Iframe execution
+                        try:
+                            # We need to create an index.html that loads the module
+                            # and provides the dependencies via Import Map
+                            
+                            html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Widget Preview</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: transparent; margin: 0; padding: 0; overflow: hidden; }
+        #root { width: 100%; height: 100%; display: flex; flex-direction: column; }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+            "framer-motion": "https://esm.sh/framer-motion@10.12.16"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module">
+        import React from 'react';
+        import { createRoot } from 'react-dom/client';
+        import Widget from './widget.bundled.js';
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(React.createElement(Widget));
+    </script>
+</body>
+</html>"""
+                            
+                            with open(workspace_path / "index.html", "w") as f:
+                                f.write(html_content)
+                                
+                            print(f"[DEBUG] Generated index.html at {workspace_path / 'index.html'}", flush=True)
+
+                        except Exception as e:
+                             print(f"[DEBUG] Failed to generate index.html: {e}", flush=True)
+
+                        # Standard metadata reading logic
                         code = ""
                         title = "Generated Component"
-                        
-                        try:
-                            # Debug check file existence
-                            fpath = workspace_path / "widget.jsx"
-                            print(f"[DEBUG] Checking file {fpath}: {fpath.exists()}", flush=True)
-                            with open(fpath, "r") as f:
-                                code = f.read()
-                        except Exception as e:
-                            print(f"[DEBUG] Read failed: {e}", flush=True)
-                            code = f"// Error reading widget.jsx: {e}"
                         
                         # Try to read title from widget.json if available
                         try:
@@ -237,17 +380,32 @@ class ConversationFlow:
                         slug = re.sub(r'[^a-z0-9]', '', title.lower()[:20])
                         timestamp = int(time.time())
                         widget_id = f"{timestamp}_{slug}"
+                        
+                        # Construct URL path based on workspace location relative to GENERATED_DIR
+                        # server.py mounts GENERATED_DIR as /generated
+                        # workspace_path is .../generated/workspaces/session_id
+                        # So relative path is workspaces/session_id/index.html
+                        
+                        try:
+                            rel_path = workspace_path.relative_to(GENERATED_DIR)
+                            preview_url = f"/generated/{rel_path}/index.html"
+                        except ValueError:
+                             # Fallback if path manipulation fails
+                             preview_url = None
     
                         preview_manifest = {
                             "id": widget_id,
                             "title": title,
                             "dimensions": {"w": 2, "h": 2},
-                            "code": code,
-                            "url": None,
+                            "code": None, # Signal to use URL
+                            "url": preview_url,
                             "projectPath": str(workspace_path)
                         }
-                        # Emit preview as a normal assistant content chunk to follow OpenAI Chat Completion streaming spec
-                        yield json.dumps({"type": "chunk", "payload": f"Preview ready: {json.dumps(preview_manifest)}"})
+                        
+                        # Emit preview via broadcast_event (to the event stream)
+                        if session_id:
+                             await broadcast_event(session_id, "preview", preview_manifest)
+
 
                 # History Persistence
                 elif kind == "on_chat_model_end":
@@ -275,6 +433,9 @@ async def stream_conversation(prompt: str, session_id: Optional[str] = None):
             yield (result["type"], result["payload"])
         except json.JSONDecodeError:
             yield ("error", "Internal JSON error")
+    
+    # Explicitly signal completion
+    yield ("done", "[DONE]")
 
 
 async def stream_openai_conversation(request_body: dict):

@@ -69,6 +69,9 @@ export const initDB = async () => {
                         ...oldDoc,
                         projectPath: oldDoc.projectPath || null
                     };
+                },
+                7: (oldDoc) => {
+                    return oldDoc;
                 }
             }
         }

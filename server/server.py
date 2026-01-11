@@ -8,13 +8,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Union
 
-from conversation import stream_conversation, stream_openai_conversation
+from conversation import stream_conversation, stream_openai_conversation, broadcast_event
 from conversation import SESSION_STORE
 
 app = FastAPI()
 
 # Ensure generated directory exists
-GENERATED_DIR = "generated"
+GENERATED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated")
 if not os.path.exists(GENERATED_DIR):
     os.makedirs(GENERATED_DIR)
 
@@ -59,6 +59,41 @@ async def stream_agent_query(prompt: str, session_id: str = None):
              data = json.dumps({"type": event_type, "payload": payload})
              yield f"data: {data}\n\n"
     
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/agent/events/{session_id}")
+async def stream_agent_events(session_id: str):
+    """
+    Dedicated persistent event stream for a session.
+    """
+    async def event_generator():
+        if session_id not in SESSION_STORE:
+            # Wait a bit or error? Let's verify existence or create placeholder?
+            # For now, if session doesn't exist, we just wait until it might? 
+            # Or simpler: return 404? 
+            # Better: yield a 'waiting' status.
+            yield f"data: {json.dumps({'type': 'status', 'payload': 'Session not found. Waiting...'})}\n\n"
+            # In a real app we might create it.
+            # Here we just return to avoid complex connection logic if the user hasn't messaged yet.
+            # But client `useEventStream` will retry.
+            return
+
+        queue = SESSION_STORE[session_id].get("event_queue")
+        if not queue:
+            # Should not happen if session exists
+            yield f"data: {json.dumps({'type': 'error', 'payload': 'No event queue.'})}\n\n"
+            return
+        
+        print(f"[DEBUG] Event stream connected for {session_id}")
+        
+        try:
+            while True:
+                # Wait for next event
+                event = await queue.get()
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            print(f"[DEBUG] Event stream disconnected for {session_id}: {e}")
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.post("/v1/chat/completions")
