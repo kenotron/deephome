@@ -4,7 +4,7 @@ You can copy this into a file named `DEEPHOME_SPEC.md` for your coding agents (J
 
 ```markdown
 # DeepHome: Generative OS Specification (v1.0)
-**Project Vision:** A "Generative Android" home screen for the web/desktop where users "demand" widgets into existence. The UI isn't built by devs; it is manifested by local agents on a living grid.
+**Project Vision:** A "Generative Android" home screen for the web/desktop where users "demand" widgets into existence. The UI isn't built by devs; it is constructed by local agents on a living grid.
 
 ---
 
@@ -37,7 +37,7 @@ ________________________________________________________________________________
 
 ```
 
-### 1.2 Agent Manifesting Interface (Streaming Console)
+### 1.2 Agent Preview Interface (Streaming Console)
 
 ```text
        __________________________________________________________
@@ -100,9 +100,9 @@ DeepHome is a **Local-First** application that embeds an AI agent directly into 
 * **Sync:** **IBM Cloudant** (Lite tier) for perpetual $0 2-way sync across devices.
 * **Secrets:** Tauri Stronghold for storing local API keys (Spotify, GitHub).
 
-### 3.2 The Widget Manifest (JSON Interface)
+### 3.2 Widget Definition (JSON Interface)
 
-Every generated widget is stored as a "Manifest" in RxDB:
+Every generated widget is stored as a widget spec in RxDB:
 
 ```json
 {

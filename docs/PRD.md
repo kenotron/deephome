@@ -7,7 +7,7 @@
 - **User Personas:** Non-technical "Creators" who describe what they want rather than coding it.
 - **Design Language:** Modern, glassmorphic, and minimal.
 - **Primary Interaction:** A "Manus-style" floating dock/pill at the bottom center.
-- **Manifestation:** Widgets don't just "load"; they are "constructed" on the grid with streaming code previews and fluid animations (Framer Motion).
+- **Previewing:** Widgets are created with streaming code previews and fluid animations (Framer Motion).
 
 ---
 
@@ -28,12 +28,12 @@
     1. Frontend `invokes` a Tauri command.
     2. Rust calls the **Embedded Python Interpreter**.
     3. The Agent (Agno) streams tokens back to the UI via **Tauri Events**.
-    4. On completion, a **Widget Manifest** is saved to RxDB.
+    4. On completion, a generated widget record (widget spec) is saved to RxDB.
 
 ---
 
-## 4. The Widget Manifest Schema
-Widgets are defined as portable JSON blobs:
+## 4. Widget Definition Schema
+Generated widgets are defined as portable JSON blobs (widget spec):
 - **Metadata:** Name, icon, dimensions.
 - **View:** React/Tailwind code string to be compiled in-browser (e.g., via Sucrase).
 - **DataModel:** A defined RxDB schema for the widget's own local persistence.
@@ -46,7 +46,7 @@ Widgets are defined as portable JSON blobs:
 2. **The Bridge:** Embed Python using `python-build-standalone` and PyO3.
 3. **The Agent:** Implement an Agno agent with "Tool Use" for file/web access.
 4. **The Dock:** Build the streaming "Pill" UI for real-time widget generation.
-5. **The Marketplace:** A discovery view where `is_public` manifests are synced from Cloudant.
+- **The Marketplace:** A discovery view where `is_public` widget specs are synced from Cloudant.
 
 ---
 

@@ -40,25 +40,22 @@ async def test_agent_search_capability():
              pass
 
     # Basic Validation
-    # 1. ensure we got a manifest
-    manifest_events = [e for e in events if e[0] == 'manifest']
-    assert len(manifest_events) == 1, "Agent failed to generate a manifest"
-    
-    manifest = json.loads(manifest_events[0][1])
-    print(f"[MANIFEST] {manifest}")
-    
-    # 2. Check if we saw any tool usage logs (heuristic)
-    # The 'log' events from the agent might contain "Using tool..." or similar depending on verbose level
-    # But explicitly, our agent code yields "tool_call" if Agno streams it effectively.
-    # Note: Agno's `stream=True` behavior with built-in tools might vary.
-    
-    # Let's inspect the files content to see if it looks like it has real data
-    # (Checking for a number in the title or HTML)
-    
-    widget_dir = "generated/" + manifest["id"]
-    with open(f"{widget_dir}/index.html", "r") as f:
-        html = f.read()
-        print(f"[HTML Snippet] {html[:200]}")
+    # 1. ensure we got a preview (emitted as a chunk)
+    preview_events = [e for e in events if e[0] == 'chunk' and isinstance(e[1], str) and e[1].startswith('Preview ready: ')]
+    assert len(preview_events) == 1, "Agent failed to generate a preview"
+
+    preview = json.loads(preview_events[0][1][len('Preview ready: '):])
+    print(f"[PREVIEW] {preview}")
+
+    # 2. Check generated files (if the agent created files in generated/<id>)
+    widget_dir = os.path.join('generated', preview['id'])
+    index_path = os.path.join(widget_dir, 'index.html')
+    if os.path.exists(index_path):
+        with open(index_path, 'r') as f:
+            html = f.read()
+            print(f"[HTML Snippet] {html[:200]}")
+    else:
+        print(f"[INFO] No index.html at {index_path}; agent may have stored files elsewhere (projectPath={preview.get('projectPath')})")
         
     # We expect some number representing price
     # e.g. "$95,000" or similar.

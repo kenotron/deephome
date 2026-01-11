@@ -47,10 +47,6 @@ async def test_reasoning_stream():
                 other_events.append(("tool_call", payload))
                 print(f"\n[TOOL_CALL] {payload}")
 
-            elif event_type == "manifest":
-                other_events.append(("manifest", payload))
-                print(f"\n[MANIFEST] Generated")
-
             elif event_type == "done":
                 print(f"\n[DONE]")
 

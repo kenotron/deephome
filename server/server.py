@@ -1,13 +1,15 @@
-import asyncio
+import os
 import json
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
-from agent import generate_widget_stream
-from workflow import SESSION_STORE
-
 from fastapi.staticfiles import StaticFiles
-import os
+
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any, Union
+
+from conversation import stream_conversation, stream_openai_conversation
+from conversation import SESSION_STORE
 
 app = FastAPI()
 
@@ -26,7 +28,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from fastapi import Request
+# OpenAI Pydantic Models
+class Message(BaseModel):
+    role: str
+    content: str
+
+class ChatCompletionRequest(BaseModel):
+    model: str = "deep-agent"
+    messages: List[Message]
+    stream: Optional[bool] = False
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = 0.7
+    user: Optional[str] = None # We will use this as session_id if provided
 
 @app.middleware("http")
 async def add_frame_headers(request: Request, call_next):
@@ -41,16 +54,32 @@ async def add_frame_headers(request: Request, call_next):
 @app.get("/agent/query")
 async def stream_agent_query(prompt: str, session_id: str = None):
     async def event_generator():
-        # SSE format: data: <payload>\n\n
-        # We need to serialize our (event_type, payload) tuple into SSE format
-        # Common pattern: event: type \n data: payload \n\n
-        async for event_type, payload in generate_widget_stream(prompt, session_id):
-             # payload is a string (JSON or text)
-             # We wrap it in a JSON object for the SSE 'data' field
+        # Backward compatibility endpoint
+        async for event_type, payload in stream_conversation(prompt, session_id):
              data = json.dumps({"type": event_type, "payload": payload})
              yield f"data: {data}\n\n"
     
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/v1/chat/completions")
+async def chat_completions(request: ChatCompletionRequest):
+    """
+    OpenAI-compatible Chat Completion Endpoint (Streaming only for now).
+    """
+    if not request.stream:
+        # TODO: Implement blocking mode if needed. For now, force validation error or just stream?
+        # A compliant API should handle non-stream, but we are optimizing for Agent streaming.
+        # We'll just stream and let the client handle it, or return a 400.
+        # Ideally, we buffer and return full response.
+        return JSONResponse(status_code=400, content={"error": "Only streaming is supported. Set stream=true."})
+
+    # Prepare request dict for the adapter
+    req_dict = request.model_dump()
+    
+    return StreamingResponse(
+        stream_openai_conversation(req_dict), 
+        media_type="text/event-stream"
+    )
 
 @app.get("/agent/history/{session_id}")
 async def get_agent_history(session_id: str):

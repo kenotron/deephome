@@ -41,7 +41,7 @@ function AppContent({ db }: { db: any }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
-  const [lastManifest, setLastManifest] = useState<any>(null);
+  const [lastPreview, setLastPreview] = useState<any>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   const { result: widgets, isFetching } = useRxData(
@@ -54,7 +54,7 @@ function AppContent({ db }: { db: any }) {
     console.log("Submitting prompt:", prompt);
     setIsGenerating(true);
     setIsComplete(false);
-    setLastManifest(null);
+    setLastPreview(null);
 
     // Ensure session ID exists
     let sessionId = currentSessionId;
@@ -111,7 +111,24 @@ function AppContent({ db }: { db: any }) {
                 break;
               case 'chunk':
               case 'response': // Keep 'response' for backward compatibility
-                activeMsg.content = (activeMsg.content || '') + payload;
+                // Detect preview manifests emitted as a standard assistant chunk
+                const previewPrefix = 'Preview ready: ';
+                if (typeof payload === 'string' && payload.startsWith(previewPrefix)) {
+                  try {
+                    const manifestJson = payload.slice(previewPrefix.length);
+                    const manifest = JSON.parse(manifestJson);
+                    // Set preview state and stop generation
+                    setLastPreview(manifest);
+                    setIsComplete(true);
+                    setIsGenerating(false);
+                    evtSource.close();
+                  } catch (e) {
+                    console.error('Failed to parse preview manifest', e);
+                    activeMsg.content = (activeMsg.content || '') + payload;
+                  }
+                } else {
+                  activeMsg.content = (activeMsg.content || '') + payload;
+                }
                 break;
               case 'tool_call':
                 const toolData = JSON.parse(payload);
@@ -122,14 +139,6 @@ function AppContent({ db }: { db: any }) {
                   status: 'running' as const
                 };
                 activeMsg.toolCalls = [...(activeMsg.toolCalls || []), newToolCall];
-                break;
-              case 'manifest':
-                // Done
-                setIsComplete(true);
-                setIsGenerating(false);
-                const manifest = JSON.parse(payload);
-                setLastManifest(manifest);
-                evtSource.close();
                 break;
               case 'done':
                 setIsGenerating(false);
@@ -173,7 +182,7 @@ function AppContent({ db }: { db: any }) {
 
     // Clear previous state for fresh start
     setMessages([]);
-    setLastManifest(null);
+    setLastPreview(null);
     setIsComplete(false);
 
     // Update URL to widget creation
@@ -206,7 +215,7 @@ function AppContent({ db }: { db: any }) {
     // Set up preview with existing widget
     // CRITICAL FIX: Destructure/copy properties to ensure we have a PLAIN object
     // RxDB returns Proxy objects that cannot be structured cloned or frozen easily by some state managers
-    setLastManifest({
+    setLastPreview({
       id: widget.id,
       title: widget.title,
       code: widget.code,
@@ -251,45 +260,45 @@ function AppContent({ db }: { db: any }) {
   };
 
   const handleConfirmWidget = async () => {
-    if (lastManifest && db) {
-      console.log("Confirming widget deployment:", lastManifest.id);
+    if (lastPreview && db) {
+      console.log("Confirming widget deployment:", lastPreview.id);
       try {
         // Check if widget already exists (editing case)
-        const existingWidget = await db.widgets.findOne(lastManifest.id).exec();
+        const existingWidget = await db.widgets.findOne(lastPreview.id).exec();
 
         if (existingWidget) {
           // Update existing widget
           await existingWidget.patch({
-            title: lastManifest.title || existingWidget.title,
-            code: lastManifest.code || existingWidget.code,
-            url: lastManifest.url || existingWidget.url,
-            dimensions: lastManifest.dimensions || existingWidget.dimensions,
+            title: lastPreview.title || existingWidget.title,
+            code: lastPreview.code || existingWidget.code,
+            url: lastPreview.url || existingWidget.url,
+            dimensions: lastPreview.dimensions || existingWidget.dimensions,
             sessionId: currentSessionId || existingWidget.sessionId,
-            projectPath: (lastManifest as any).projectPath || existingWidget.projectPath
+            projectPath: (lastPreview as any).projectPath || existingWidget.projectPath
           });
           console.log("Widget updated successfully");
         } else {
           // Insert new widget
           await db.widgets.insert({
-            id: lastManifest.id || `gen-${Date.now()}`,
-            title: lastManifest.title || "Generated Widget",
-            code: lastManifest.code,
-            url: lastManifest.url,
+            id: lastPreview.id || `gen-${Date.now()}`,
+            title: lastPreview.title || "Generated Widget",
+            code: lastPreview.code,
+            url: lastPreview.url,
             dimensions: {
-              w: lastManifest.dimensions?.w || 2,
-              h: lastManifest.dimensions?.h || 2
+              w: lastPreview.dimensions?.w || 2,
+              h: lastPreview.dimensions?.h || 2
             },
             x: 0,
             y: 0,
             sessionId: currentSessionId || null,
-            projectPath: (lastManifest as any).projectPath || null,
+            projectPath: (lastPreview as any).projectPath || null,
             createdAt: Date.now()
           });
           console.log("Widget inserted successfully");
         }
 
         // Reset state and switch mode
-        setLastManifest(null);
+        setLastPreview(null);
         setIsComplete(false);
         navigate('/');
         setViewMode('dashboard');
@@ -298,7 +307,7 @@ function AppContent({ db }: { db: any }) {
         alert("Error: Failed to save widget. Check console.");
       }
     } else {
-      console.warn("handleConfirmWidget called without manifest or db", { lastManifest, db: !!db });
+      console.warn("handleConfirmWidget called without manifest or db", { lastPreview, db: !!db });
     }
   };
 
@@ -362,14 +371,14 @@ function AppContent({ db }: { db: any }) {
               messages={messages}
               onSendMessage={handleSendMessage}
               onConfirm={handleConfirmWidget}
-              previewUrl={lastManifest?.url}
-              previewCode={lastManifest?.code}
-              isEditingExisting={lastManifest && widgets?.some((w: any) => w.id === lastManifest.id)}
+              previewUrl={lastPreview?.url}
+              previewCode={lastPreview?.code}
+              isEditingExisting={lastPreview && widgets?.some((w: any) => w.id === lastPreview.id)}
               onClose={() => {
                 navigate('/');
                 setViewMode('dashboard');
               }}
-              dimensions={lastManifest?.dimensions}
+              dimensions={lastPreview?.dimensions}
             />
           </ErrorBoundary>
         </div>

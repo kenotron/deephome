@@ -23,8 +23,8 @@ This document breaks down the [PRD](./PRD.md) into systematic implementation pha
 - [ ] **Dynamic Widget Engine**
     - [ ] Implement browser-side compilation (Sucrase/Babel) for `DynamicWidget.tsx`.
     - [ ] Update `agent.py` to generate React components instead of vanilla HTML.
-- [ ] **Manifest V2 Implementation**
-    - [ ] Enforce strict JSON Schema for manifests (View, DataModel, Capabilities).
+- [ ] **Widget Spec V2 Implementation**
+    - [ ] Enforce strict JSON Schema for widget specs (View, DataModel, Capabilities).
     - [ ] Update RxDB schema to support widget-specific local storage.
 
 ## Phase 3: The Data Bridge & Security
