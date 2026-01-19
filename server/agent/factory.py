@@ -11,7 +11,7 @@ from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langgraph.graph.state import CompiledStateGraph
 
-from skills import SkillsMiddleware
+from .middleware import SkillsMiddleware
 
 # Setup Logging
 log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_debug.log")

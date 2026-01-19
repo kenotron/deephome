@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
 import { X, Check, Loader2, Sparkles, Bot, Terminal, ChevronRight, ChevronDown } from 'lucide-react';
-import type { AgentMessage, ToolCall } from '../types';
+import type { AgentMessage, ToolCall } from '../../../types';
 import { ChatInput } from './ChatInput';
 import { Streamdown } from 'streamdown';
-import { DynamicWidget } from './DynamicWidget';
+import { DynamicWidget } from '../../preview';
 
 export interface AgentConsoleProps {
     isOpen?: boolean;
@@ -85,7 +85,7 @@ export function AgentConsole(props: AgentConsoleProps) {
                                     <div className="w-full space-y-2">
                                         {msg.thoughts && <ThoughtProcess thoughts={msg.thoughts} />}
 
-                                        {msg.toolCalls?.map(tool => (
+                                        {msg.toolCalls?.map((tool: ToolCall) => (
                                             <ToolCallItem key={tool.id} tool={tool} />
                                         ))}
 
@@ -208,8 +208,8 @@ function ToolCallItem({ tool }: { tool: ToolCall }) {
             <span className="font-medium">{tool.name}</span>
             <span className="opacity-40">({Object.keys(tool.args || {}).length} args)</span>
             <span className={`ml-auto px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${tool.status === 'running'
-                    ? 'bg-[var(--terracotta)]/10 text-[var(--terracotta)] animate-pulse'
-                    : 'bg-[var(--sage-green)]/10 text-[var(--sage-green)]'
+                ? 'bg-[var(--terracotta)]/10 text-[var(--terracotta)] animate-pulse'
+                : 'bg-[var(--sage-green)]/10 text-[var(--sage-green)]'
                 }`}>
                 {tool.status}
             </span>

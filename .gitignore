@@ -12,4 +12,5 @@ dist
 .vite
 **/__pycache__
 *.log
-server/projects/*
+**/*.pyc
+**/server/projects

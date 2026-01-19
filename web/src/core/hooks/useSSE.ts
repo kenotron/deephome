@@ -10,7 +10,7 @@ interface UseEventStreamOptions {
     enabled?: boolean;
 }
 
-export function useEventStream({ url, onMessage, onOpen, onError, enabled = true }: UseEventStreamOptions) {
+export function useSSE({ url, onMessage, onOpen, onError, enabled = true }: UseEventStreamOptions) {
     const eventSourceRef = useRef<EventSource | null>(null);
     const [isConnected, setIsConnected] = useState(false);
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Widget } from './Widget';
-import { DynamicWidget } from './DynamicWidget';
+import { DynamicWidget } from '../../preview';
 import 'gridstack/dist/gridstack.min.css';
 import { GridStack } from 'gridstack';
 import { useRxCollection } from 'rxdb-hooks';

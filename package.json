@@ -7,7 +7,7 @@
     ],
     "scripts": {
         "dev:web": "bun run --cwd web dev",
-        "dev:server": "cd server && uv run uvicorn server:app --reload --port 8000",
+        "dev:server": "cd server && PYTHONPATH=.. uv run uvicorn main:app --reload --port 8000",
         "dev:desktop": "bun run --cwd desktop tauri dev",
         "dev": "concurrently \"bun run dev:web\" \"bun run dev:server\"",
         "dev:app": "concurrently \"bun run dev:server\" \"bun run dev:desktop\"",

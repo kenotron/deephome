@@ -8,8 +8,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Union
 
-from conversation import stream_conversation, stream_openai_conversation, broadcast_event
-from conversation import SESSION_STORE
+from server.chat.service import stream_conversation # stream_openai_conversation would be next
+from server.session.store import SESSION_STORE, broadcast_event
 
 app = FastAPI()
 

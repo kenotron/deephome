@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { Dock } from '../components/Dock';
+import { Dock } from '../modules/dashboard/components/Dock';
 
 describe('Dock Component', () => {
     it('renders input field', () => {

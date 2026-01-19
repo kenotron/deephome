@@ -3,7 +3,7 @@ import * as Babel from '@babel/standalone';
 import * as Lucide from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import { ErrorBoundary } from './ui/ErrorBoundary';
+import { ErrorBoundary } from '../../../core/ui/ErrorBoundary';
 
 interface DynamicWidgetProps {
     code: string;

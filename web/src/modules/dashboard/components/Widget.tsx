@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { cn } from '../lib/utils';
+import { cn } from '../../../core/lib/utils';
 import { Pencil, X } from 'lucide-react';
 
 export interface WidgetProps {

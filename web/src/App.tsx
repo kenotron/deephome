@@ -1,14 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
-import { ErrorBoundary } from './components/ui/ErrorBoundary';
-import { AgentConsole } from './components/AgentConsole';
-import { Grid } from './components/Grid';
-import { Dock } from './components/Dock';
-import { Header } from './components/Header';
-import type { AgentMessage } from './types';
+import { ErrorBoundary } from './core/ui/ErrorBoundary';
+import { AgentConsole } from './modules/agent';
+import { Grid, Dock, Header } from './modules/dashboard';
+import { TestAgentPage } from './pages/TestAgentPage';
 import { useRxData, Provider } from 'rxdb-hooks';
-import { useEventStream } from './hooks/useEventStream';
+import { useAgentSession } from './modules/agent/hooks/useAgentSession';
 
 // App View Modes
 type ViewMode = 'dashboard' | 'agent';
@@ -39,174 +37,34 @@ function AppContent({ db }: { db: any }) {
   const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
   const [isEditMode, setIsEditMode] = useState(false);
 
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isComplete, setIsComplete] = useState(false);
-  const [messages, setMessages] = useState<AgentMessage[]>([]);
-  const [lastPreview, setLastPreview] = useState<any>(null);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  // Hook-based Agent State
+  const {
+    currentSessionId,
+    messages,
+    isGenerating,
+    isComplete,
+    setIsComplete,
+    lastPreview,
+    setLastPreview,
+    actions: { sendMessage, startSession, loadHistory, setMessages }
+  } = useAgentSession();
 
   const { result: widgets, isFetching } = useRxData(
     'widgets',
     collection => collection.find().sort({ createdAt: 'desc' })
   );
 
-  // 1. Persistent Event Channel
-  // Connect to the event stream for the current session (or wait until we have one)
-  useEventStream({
-    url: currentSessionId ? `http://localhost:8000/agent/events/${currentSessionId}` : '',
-    enabled: !!currentSessionId,
-    onMessage: (event) => {
-      const { type, payload } = event;
-
-      switch (type) {
-        case 'preview':
-          console.log("[EventStream] Received preview:", payload);
-          setLastPreview(payload);
-          break;
-        case 'status':
-          console.log("[EventStream] Status:", payload);
-          break;
-        case 'error':
-          console.error("[EventStream] Error:", payload);
-          break;
-      }
-    }
-  });
-
-
-  const handleSendMessage = async (prompt: string) => {
-    console.log("Submitting prompt:", prompt);
-    setIsGenerating(true);
-    setIsComplete(false);
-    setLastPreview(null);
-
-    // Ensure session ID exists
-    let sessionId = currentSessionId;
-    if (!sessionId) {
-      sessionId = Date.now().toString();
-      setCurrentSessionId(sessionId);
-    }
-
-    // Create initial user message and placeholder assistant message
-    const userMsg: AgentMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: prompt,
-      timestamp: Date.now()
-    };
-
-    const assistantMsgId = (Date.now() + 1).toString();
-    const assistantMsg: AgentMessage = {
-      id: assistantMsgId,
-      role: 'assistant',
-      content: '',
-      thoughts: [],
-      toolCalls: [],
-      timestamp: Date.now()
-    };
-
-    setMessages(prev => [...prev, userMsg, assistantMsg]);
-
-    try {
-      console.log("Connecting to Web Backend (FastAPI)...");
-      const evtSource = new EventSource(`http://localhost:8000/agent/query?prompt=${encodeURIComponent(prompt)}&session_id=${sessionId}`);
-
-      evtSource.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(event.data);
-          const { type, payload } = parsed;
-
-          setMessages(prev => {
-            const index = prev.findIndex(m => m.id === assistantMsgId);
-            if (index === -1) return prev;
-
-            // Create a swallow copy of the message to update
-            const activeMsg = { ...prev[index] };
-
-            switch (type) {
-              case 'log':
-              case 'status':
-                // Debug logs - ignore them (don't show as reasoning)
-                console.log('[Agent Log]', payload);
-                break;
-              case 'reasoning':
-                // Append payload token to the last thought, or start a new one if empty
-                // CRITICAL FIX: Must deep copy the array to avoid mutating previous state (Strict Mode issue)
-                activeMsg.thoughts = [...(activeMsg.thoughts || [])];
-
-                if (activeMsg.thoughts.length === 0) {
-                  activeMsg.thoughts.push(payload);
-                } else {
-                  const lastIdx = activeMsg.thoughts.length - 1;
-                  activeMsg.thoughts[lastIdx] = activeMsg.thoughts[lastIdx] + payload;
-                }
-                break;
-              // 'preview' is now handled by the persistent event channel above!
-              case 'chunk':
-              case 'response': // Keep 'response' for backward compatibility
-                activeMsg.content = (activeMsg.content || '') + payload;
-                break;
-              case 'tool_call':
-                const toolData = JSON.parse(payload);
-                const newToolCall = {
-                  id: Date.now().toString(),
-                  name: toolData.name,
-                  args: toolData.args,
-                  status: 'running' as const
-                };
-                activeMsg.toolCalls = [...(activeMsg.toolCalls || []), newToolCall];
-                break;
-              case 'done':
-                setIsGenerating(false);
-                setIsComplete(true);  // Enable deploy button
-                evtSource.close();
-                break;
-              case 'error':
-                activeMsg.content = (activeMsg.content || '') + `\n\n[ERROR]: ${payload}`;
-                setIsGenerating(false);
-                evtSource.close();
-                break;
-            }
-
-            // Return new array with updated message
-            const newHistory = [...prev];
-            newHistory[index] = activeMsg;
-            return newHistory;
-          });
-
-        } catch (e) {
-          console.error("Parse error", e);
-        }
-      };
-
-      evtSource.onerror = (err) => {
-        console.error("SSE Error:", err);
-        setIsGenerating(false);
-        evtSource.close();
-      };
-
-    } catch (e) {
-      console.error("Agent failed:", e);
-      setIsGenerating(false);
-    }
-  };
-
   const handleDockSubmit = (prompt: string) => {
     // Canvas chat = NEW widget session
     const newSessionId = Date.now().toString();
-    setCurrentSessionId(newSessionId);
+    startSession(newSessionId);
     console.log("Starting NEW widget session:", newSessionId);
-
-    // Clear previous state for fresh start
-    setMessages([]);
-    setLastPreview(null);
-    setIsComplete(false);
 
     // Update URL to widget creation
     navigate('/widget/new');
 
     setViewMode('agent');
-    handleSendMessage(prompt);
+    sendMessage(prompt);
   };
 
   const handleEditWidget = async (widgetId: string) => {
@@ -219,9 +77,9 @@ function AppContent({ db }: { db: any }) {
 
     const widget = widgetDoc as any; // Cast to any to access schema properties safely
 
-    // Restore the session ID - the backend SESSION_STORE will have the full conversation history
+    // Restore the session ID
     const sessionId = widget.sessionId || Date.now().toString();
-    setCurrentSessionId(sessionId);
+    startSession(sessionId);
 
     // Update URL to widget editing
     navigate(`/widget/${widgetId}`);
@@ -230,8 +88,6 @@ function AppContent({ db }: { db: any }) {
     setViewMode('agent');
 
     // Set up preview with existing widget
-    // CRITICAL FIX: Destructure/copy properties to ensure we have a PLAIN object
-    // RxDB returns Proxy objects that cannot be structured cloned or frozen easily by some state managers
     setLastPreview({
       id: widget.id,
       title: widget.title,
@@ -243,37 +99,10 @@ function AppContent({ db }: { db: any }) {
       }
     });
 
-    // Start with empty messages - the backend session has the real history
-    // When the user sends a message, the agent will have full context from SESSION_STORE
-    setMessages([]);
-
-    // Fetch existing history
-    try {
-      const res = await fetch(`http://localhost:8000/agent/history/${sessionId}`);
-      if (res.ok) {
-        const history = await res.json();
-        // Transform history if needed to match AgentMessage
-        const formattedHistory = history.map((msg: any, i: number) => ({
-          id: `hist-${i}`,
-          role: msg.role,
-          content: msg.content,
-          toolCalls: msg.tool_calls ? msg.tool_calls.map((tc: any) => ({
-            id: tc.payload ? JSON.parse(tc.payload).id : 'unknown',
-            name: tc.payload ? JSON.parse(tc.payload).name : 'unknown',
-            args: tc.payload ? JSON.parse(tc.payload).args : {},
-            status: 'completed',
-            result: 'Executed'
-          })) : [],
-          timestamp: Date.now() // Timestamps might not be in the store yet
-        }));
-        setMessages(formattedHistory);
-      }
-    } catch (e) {
-      console.error("Failed to fetch history:", e);
-    }
+    // Load history
+    loadHistory(sessionId);
 
     setIsComplete(true); // Mark as complete since we have a widget to show
-    setIsGenerating(false);
   };
 
   const handleConfirmWidget = async () => {
@@ -357,8 +186,13 @@ function AppContent({ db }: { db: any }) {
         </>
       )}
 
+      {/* Test Route - Hacky manual routing for now or we could use React Router properly in future */}
+      {window.location.pathname === '/test/agent' && (
+        <TestAgentPage />
+      )}
+
       {/* Agent/Chat View */}
-      {viewMode === 'agent' && (
+      {viewMode === 'agent' && window.location.pathname !== '/test/agent' && (
         <div className="absolute inset-0 z-10 animate-in fade-in slide-in-from-bottom-10 duration-300">
           <ErrorBoundary
             label="Agent Interface Error"
@@ -386,7 +220,7 @@ function AppContent({ db }: { db: any }) {
               isGenerating={isGenerating}
               isComplete={isComplete}
               messages={messages}
-              onSendMessage={handleSendMessage}
+              onSendMessage={sendMessage}
               onConfirm={handleConfirmWidget}
               previewUrl={lastPreview?.url}
               previewCode={lastPreview?.code}
